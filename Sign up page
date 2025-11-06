@@ -1,0 +1,188 @@
+import tkinter as tk
+from tkinter import messagebox
+
+# Store user data in a dictionary: {email: password}
+users = {}
+
+class CoffeeApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Coffee Shop ☕")
+        self.geometry("320x480")
+        self.configure(bg="#d7c2a4")  # warm beige background
+        self.resizable(False, False)
+
+        self.active_frame = None
+        self.create_welcome_screen()
+
+    def clear_active_frame(self):
+        if self.active_frame:
+            self.active_frame.destroy()
+
+    def create_welcome_screen(self):
+        self.clear_active_frame()
+        frame = tk.Frame(self, bg="white", bd=0)
+        frame.place(relx=0.1, rely=0.15, relwidth=0.8, relheight=0.7)
+
+        # Simulated rounded corner by padding and bg contrast
+        frame.config(highlightbackground="#b38b4d", highlightthickness=2)
+
+        # Coffee image placeholder (replace with image if needed)
+        coffee_img_frame = tk.Frame(frame, bg="white")
+        coffee_img_frame.place(relx=0, rely=0, relwidth=1, relheight=0.55)
+        label_img = tk.Label(coffee_img_frame, text="☕", font=("Arial", 80), bg="white")
+        label_img.pack(expand=True)
+
+        # Text content
+        tk.Label(frame, text="Welcome to Coffee Shop", font=("Helvetica", 14, "bold"), bg="white", fg="#6b4e16").place(relx=0.1, rely=0.6)
+        tk.Label(frame, text="Get wide range of specialty coffee,\ntea and beverages.", font=("Helvetica", 10), bg="white", fg="#7a5a27").place(relx=0.1, rely=0.68)
+
+        # Sign In button
+        btn = tk.Button(frame, text="Sign In", bg="#6f4e37", fg="white",
+                        font=("Helvetica", 12), relief="raised", bd=3,
+                        command=self.create_login_signup_tabs)
+        btn.place(relx=0.3, rely=0.85, relwidth=0.4, height=35)
+
+        self.active_frame = frame
+
+    def create_login_signup_tabs(self):
+        self.clear_active_frame()
+        frame = tk.Frame(self, bg="#a67c52")
+        frame.place(relx=0.1, rely=0.05, relwidth=0.8, relheight=0.9)
+        self.active_frame = frame
+
+        # Tabs: Sign In and Sign Up labels to switch screens
+        self.current_tab = tk.StringVar(value="sign_in")
+
+        def switch_tab(tab):
+            self.current_tab.set(tab)
+            if tab == "sign_in":
+                self.show_sign_in(frame)
+            else:
+                self.show_sign_up(frame)
+
+        # Tab buttons
+        tab_frame = tk.Frame(frame, bg="#a67c52")
+        tab_frame.pack(fill="x", pady=10)
+
+        sign_in_label = tk.Label(tab_frame, text="Sign In", fg="white", bg="#a67c52",
+                                 font=("Helvetica", 12, "bold"), cursor="hand2", padx=10, pady=5)
+        sign_in_label.pack(side="left", padx=10)
+        sign_in_label.bind("<Button-1>", lambda e: switch_tab("sign_in"))
+
+        sign_up_label = tk.Label(tab_frame, text="Sign Up", fg="#e0cca6", bg="#a67c52",
+                                 font=("Helvetica", 12), cursor="hand2", padx=10, pady=5)
+        sign_up_label.pack(side="left", padx=10)
+        sign_up_label.bind("<Button-1>", lambda e: switch_tab("sign_up"))
+
+        # Container for forms
+        self.form_container = tk.Frame(frame, bg="#a67c52")
+        self.form_container.pack(fill="both", expand=True)
+
+        self.show_sign_in(frame)
+
+        
+        def update_tabs(*args):
+            if self.current_tab.get() == "sign_in":
+                sign_in_label.config(font=("Helvetica", 12, "bold"), fg="white")
+                sign_up_label.config(font=("Helvetica", 12), fg="#e0cca6")
+            else:
+                sign_in_label.config(font=("Helvetica", 12), fg="#e0cca6")
+                sign_up_label.config(font=("Helvetica", 12, "bold"), fg="white")
+
+        self.current_tab.trace_add('write', update_tabs)
+        update_tabs()
+
+    def show_sign_in(self, parent):
+        for widget in self.form_container.winfo_children():
+            widget.destroy()
+
+        # Email
+        tk.Label(self.form_container, text="📧 Email Address:", bg="#a67c52", fg="#3d2b1f", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(10, 2))
+        email_entry = tk.Entry(self.form_container, bg="#d9c9a6", font=("Helvetica", 10))
+        email_entry.pack(fill="x", padx=10)
+
+        # Password
+        tk.Label(self.form_container, text="🔒 Password:", bg="#a67c52", fg="#3d2b1f", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(10, 2))
+        password_entry = tk.Entry(self.form_container, show="*", bg="#d9c9a6", font=("Helvetica", 10))
+        password_entry.pack(fill="x", padx=10)
+
+        # Sign In Button
+        def attempt_sign_in():
+            email = email_entry.get().strip()
+            password = password_entry.get()
+            if not email or not password:
+                messagebox.showerror("Error", "Please fill in all fields.")
+                return
+            if email not in users:
+                messagebox.showerror("Error", "Email not registered. Please sign up first.")
+                return
+            if users[email] != password:
+                messagebox.showerror("Error", "Incorrect password. Please try again.")
+                return
+            messagebox.showinfo("Success", f"Welcome back, {email}! Enjoy your Coffee ☕")
+
+        btn = tk.Button(self.form_container, text="Sign In", bg="#6f4e37", fg="white",
+                        font=("Helvetica", 12), command=attempt_sign_in)
+        btn.pack(pady=15, ipadx=10, ipady=5)
+
+        # Forgot password label (no function)
+        tk.Label(self.form_container, text="Forgot Password?", fg="#3d2b1f", bg="#a67c52",
+                 font=("Helvetica", 9, "underline"), cursor="hand2").pack()
+
+        # Or separator and dummy social icons
+        tk.Label(self.form_container, text="or", bg="#a67c52", fg="#4b3a1a", font=("Helvetica", 10)).pack(pady=12)
+        social_frame = tk.Frame(self.form_container, bg="#a67c52")
+        social_frame.pack()
+        tk.Label(social_frame, text="F", font=("Helvetica", 20, "bold"), bg="#3b5998", fg="white", width=3, height=1).pack(side="left", padx=15)
+        tk.Label(social_frame, text="G", font=("Helvetica", 20, "bold"), bg="#d34836", fg="white", width=3, height=1).pack(side="left", padx=15)
+
+    def show_sign_up(self, parent):
+        for widget in self.form_container.winfo_children():
+            widget.destroy()
+
+        # Email
+        tk.Label(self.form_container, text="📧 Email Address:", bg="#a67c52", fg="#3d2b1f", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(10, 2))
+        email_entry = tk.Entry(self.form_container, bg="#d9c9a6", font=("Helvetica", 10))
+        email_entry.pack(fill="x", padx=10)
+
+        # Password
+        tk.Label(self.form_container, text="🔒 Password:", bg="#a67c52", fg="#3d2b1f", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(10, 2))
+        password_entry = tk.Entry(self.form_container, show="*", bg="#d9c9a6", font=("Helvetica", 10))
+        password_entry.pack(fill="x", padx=10)
+
+        # Confirm Password
+        tk.Label(self.form_container, text="🔒 Confirm Password:", bg="#a67c52", fg="#3d2b1f", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(10, 2))
+        confirm_entry = tk.Entry(self.form_container, show="*", bg="#d9c9a6", font=("Helvetica", 10))
+        confirm_entry.pack(fill="x", padx=10)
+
+        def attempt_sign_up():
+            email = email_entry.get().strip()
+            password = password_entry.get()
+            confirm = confirm_entry.get()
+
+            if not email or not password or not confirm:
+                messagebox.showerror("Error", "Please fill in all fields.")
+                return
+            if email in users:
+                messagebox.showerror("Error", "Email already registered. Please sign in.")
+                return
+            if password != confirm:
+                messagebox.showerror("Error", "Passwords do not match!")
+                return
+            if len(password) < 6:
+                messagebox.showerror("Error", "Password must be at least 6 characters long.")
+                return
+
+            users[email] = password
+            messagebox.showinfo("Success", "Sign Up successful! You can now Sign In.")
+            self.current_tab.set("sign_in")  # Switch to sign in tab
+            self.show_sign_in(self.active_frame)
+
+        btn = tk.Button(self.form_container, text="Sign Up", bg="#6f4e37", fg="white",
+                        font=("Helvetica", 12), command=attempt_sign_up)
+        btn.pack(pady=20, ipadx=10, ipady=5)
+
+if __name__ == "__main__":
+    app = CoffeeApp()
+    app.mainloop()
