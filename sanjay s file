@@ -1,0 +1,181 @@
+import json
+
+# ==============================================
+# Coffee Shop Management System
+# User Story 1: Maintain Product Catalogue
+# ==============================================
+
+# ---------- DATA STRUCTURE ----------
+class Product:
+    """Represents a single product in the coffee shop catalogue."""
+
+    def __init__(self, product_id, name, category, price, stock_qty):
+        self.product_id = product_id
+        self.name = name
+        self.category = category
+        self.price = price
+        self.stock_qty = stock_qty
+
+    def to_dict(self):
+        """Convert Product object to dictionary for saving to JSON."""
+        return {
+            "product_id": self.product_id,
+            "name": self.name,
+            "category": self.category,
+            "price": self.price,
+            "stock_qty": self.stock_qty
+        }
+
+    def __str__(self):
+        return f"{self.product_id} | {self.name} | {self.category} | ${self.price:.2f} | Stock: {self.stock_qty}"
+
+
+class ProductCatalogue:
+    """Manages all products and supports add, update, delete, view."""
+
+    def __init__(self, filename="catalogue.json"):
+        self.filename = filename
+        self.catalogue = {}
+        self.load_catalogue()
+
+    # ---------- CONTROL FLOW: LOAD & SAVE ----------
+    def load_catalogue(self):
+        """Load product data from file if exists."""
+        try:
+            with open(self.filename, "r") as file:
+                data = json.load(file)
+                for prod_data in data:
+                    product = Product(**prod_data)
+                    self.catalogue[product.product_id] = product
+            print("✅ Catalogue loaded successfully.")
+        except FileNotFoundError:
+            print("⚠️ No existing catalogue found. Starting fresh.")
+        except json.JSONDecodeError:
+            print("⚠️ Catalogue file is corrupted. Starting fresh.")
+        except Exception as e:
+            print(f"⚠️ Error loading catalogue: {e}")
+
+    def save_catalogue(self):
+        """Save catalogue to a JSON file."""
+        try:
+            with open(self.filename, "w") as file:
+                data = [prod.to_dict() for prod in self.catalogue.values()]
+                json.dump(data, file, indent=4)
+            print("💾 Catalogue saved successfully.")
+        except Exception as e:
+            print(f"❌ Error saving catalogue: {e}")
+
+    # ---------- BUSINESS FEATURES ----------
+    def add_product(self):
+        """Add a new product using user input with exception handling."""
+        try:
+            product_id = int(input("Enter Product ID: "))
+            if product_id in self.catalogue:
+                print("❌ Product ID already exists!")
+                return
+
+            name = input("Enter Product Name: ")
+            category = input("Enter Category: ")
+            price = float(input("Enter Price: "))
+            stock_qty = int(input("Enter Stock Quantity: "))
+
+            new_product = Product(product_id, name, category, price, stock_qty)
+            self.catalogue[product_id] = new_product
+            print(f"✅ Product '{name}' added successfully.")
+
+        except ValueError:
+            print("⚠️ Invalid input! Please enter correct data types.")
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+
+    def update_product(self):
+        """Update an existing product."""
+        try:
+            product_id = int(input("Enter Product ID to update: "))
+            if product_id not in self.catalogue:
+                print("⚠️ Product not found!")
+                return
+
+            product = self.catalogue[product_id]
+            print(f"Current details: {product}")
+
+            # Input new details
+            name = input("New Name (press Enter to keep current): ") or product.name
+            category = input("New Category (press Enter to keep current): ") or product.category
+
+            price_input = input("New Price (press Enter to keep current): ")
+            price = float(price_input) if price_input else product.price
+
+            stock_input = input("New Stock Qty (press Enter to keep current): ")
+            stock_qty = int(stock_input) if stock_input else product.stock_qty
+
+            # Update object
+            product.name = name
+            product.category = category
+            product.price = price
+            product.stock_qty = stock_qty
+
+            print(f"🔄 Product {product_id} updated successfully.")
+        except ValueError:
+            print("⚠️ Invalid numeric input.")
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+
+    def view_products(self):
+        """Display all products."""
+        print("\n📦 Product Catalogue:")
+        if not self.catalogue:
+            print("No products available.")
+        else:
+            for product in self.catalogue.values():
+                print(product)
+
+    def delete_product(self):
+        """Remove a product from the catalogue."""
+        try:
+            product_id = int(input("Enter Product ID to delete: "))
+            if product_id in self.catalogue:
+                deleted = self.catalogue.pop(product_id)
+                print(f"🗑️ Product '{deleted.name}' deleted successfully.")
+            else:
+                print("⚠️ Product not found.")
+        except ValueError:
+            print("⚠️ Invalid Product ID format.")
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+
+# ---------- CONTROL FLOW: MAIN MENU ----------
+def main():
+    shop = ProductCatalogue()
+
+    while True:
+        print("\n=== ☕ Coffee Shop Product Catalogue ===")
+        print("1. View All Products")
+        print("2. Add New Product")
+        print("3. Update Product")
+        print("4. Delete Product")
+        print("5. Save Catalogue")
+        print("6. Exit")
+
+        choice = input("Select an option (1-6): ")
+
+        if choice == "1":
+            shop.view_products()
+        elif choice == "2":
+            shop.add_product()
+        elif choice == "3":
+            shop.update_product()
+        elif choice == "4":
+            shop.delete_product()
+        elif choice == "5":
+            shop.save_catalogue()
+        elif choice == "6":
+            shop.save_catalogue()
+            print("👋 Exiting... Have a great day!")
+            break
+        else:
+            print("⚠️ Invalid choice. Please select 1–6.")
+
+# ---------- RUN PROGRAM ----------
+if __name__ == "__main__":
+    main()
