@@ -1,14 +1,12 @@
 import json
+import tkinter as tk
+from tkinter import messagebox, ttk
 
-# ==============================================
-# Coffee Shop Management System
-# User Story 1: Maintain Product Catalogue
-# ==============================================
 
-# ---------- DATA STRUCTURE ----------
+# =========================================
+# DATA STRUCTURE
+# =========================================
 class Product:
-    """Represents a single product in the coffee shop catalogue."""
-
     def __init__(self, product_id, name, category, price, stock_qty):
         self.product_id = product_id
         self.name = name
@@ -17,7 +15,6 @@ class Product:
         self.stock_qty = stock_qty
 
     def to_dict(self):
-        """Convert Product object to dictionary for saving to JSON."""
         return {
             "product_id": self.product_id,
             "name": self.name,
@@ -26,156 +23,156 @@ class Product:
             "stock_qty": self.stock_qty
         }
 
-    def __str__(self):
-        return f"{self.product_id} | {self.name} | {self.category} | ${self.price:.2f} | Stock: {self.stock_qty}"
-
 
 class ProductCatalogue:
-    """Manages all products and supports add, update, delete, view."""
-
     def __init__(self, filename="catalogue.json"):
         self.filename = filename
         self.catalogue = {}
         self.load_catalogue()
 
-    # ---------- CONTROL FLOW: LOAD & SAVE ----------
     def load_catalogue(self):
-        """Load product data from file if exists."""
         try:
             with open(self.filename, "r") as file:
                 data = json.load(file)
                 for prod_data in data:
                     product = Product(**prod_data)
                     self.catalogue[product.product_id] = product
-            print("✅ Catalogue loaded successfully.")
         except FileNotFoundError:
-            print("⚠️ No existing catalogue found. Starting fresh.")
-        except json.JSONDecodeError:
-            print("⚠️ Catalogue file is corrupted. Starting fresh.")
+            pass
         except Exception as e:
-            print(f"⚠️ Error loading catalogue: {e}")
+            print(f"⚠ Error loading catalogue: {e}")
 
     def save_catalogue(self):
-        """Save catalogue to a JSON file."""
         try:
             with open(self.filename, "w") as file:
                 data = [prod.to_dict() for prod in self.catalogue.values()]
                 json.dump(data, file, indent=4)
-            print("💾 Catalogue saved successfully.")
         except Exception as e:
             print(f"❌ Error saving catalogue: {e}")
 
-    # ---------- BUSINESS FEATURES ----------
-    def add_product(self):
-        """Add a new product using user input with exception handling."""
-        try:
-            product_id = int(input("Enter Product ID: "))
-            if product_id in self.catalogue:
-                print("❌ Product ID already exists!")
-                return
 
-            name = input("Enter Product Name: ")
-            category = input("Enter Category: ")
-            price = float(input("Enter Price: "))
-            stock_qty = int(input("Enter Stock Quantity: "))
+# =========================================
+# TKINTER GUI
+# =========================================
+class ProductApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("☕ Coffee Shop Product Catalogue")
+        self.shop = ProductCatalogue()
 
-            new_product = Product(product_id, name, category, price, stock_qty)
-            self.catalogue[product_id] = new_product
-            print(f"✅ Product '{name}' added successfully.")
+        self.build_ui()
+        self.load_table()
 
-        except ValueError:
-            print("⚠️ Invalid input! Please enter correct data types.")
-        except Exception as e:
-            print(f"❌ Unexpected error: {e}")
+    # ---------- UI LAYOUT ----------
+    def build_ui(self):
+        frame = tk.Frame(self.root, padx=10, pady=10)
+        frame.pack()
 
-    def update_product(self):
-        """Update an existing product."""
-        try:
-            product_id = int(input("Enter Product ID to update: "))
-            if product_id not in self.catalogue:
-                print("⚠️ Product not found!")
-                return
+        # Treeview Table
+        self.tree = ttk.Treeview(frame, columns=("ID", "Name", "Category", "Price", "Stock"), show="headings")
+        for col in ("ID", "Name", "Category", "Price", "Stock"):
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=120)
+        self.tree.pack()
 
-            product = self.catalogue[product_id]
-            print(f"Current details: {product}")
+        # Buttons Row
+        btn_frame = tk.Frame(self.root, pady=10)
+        btn_frame.pack()
 
-            # Input new details
-            name = input("New Name (press Enter to keep current): ") or product.name
-            category = input("New Category (press Enter to keep current): ") or product.category
+        tk.Button(btn_frame, text="Add Product", command=self.add_product_window, width=15).grid(row=0, column=0, padx=5)
+        tk.Button(btn_frame, text="Update Product", command=self.update_product_window, width=15).grid(row=0, column=1, padx=5)
+        tk.Button(btn_frame, text="Delete Product", command=self.delete_product, width=15).grid(row=0, column=2, padx=5)
+        tk.Button(btn_frame, text="Save Catalogue", command=self.shop.save_catalogue, width=15).grid(row=0, column=3, padx=5)
 
-            price_input = input("New Price (press Enter to keep current): ")
-            price = float(price_input) if price_input else product.price
+    # ---------- TABLE DISPLAY ----------
+    def load_table(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for product in self.shop.catalogue.values():
+            self.tree.insert("", "end", iid=product.product_id,
+                             values=(product.product_id, product.name, product.category,
+                                     f"${product.price:.2f}", product.stock_qty))
 
-            stock_input = input("New Stock Qty (press Enter to keep current): ")
-            stock_qty = int(stock_input) if stock_input else product.stock_qty
+    # ---------- ADD PRODUCT ----------
+    def add_product_window(self):
+        self.product_window("Add Product")
 
-            # Update object
-            product.name = name
-            product.category = category
-            product.price = price
-            product.stock_qty = stock_qty
+    # ---------- UPDATE PRODUCT ----------
+    def update_product_window(self):
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Select Product", "Please select a product to update.")
+            return
+        product_id = int(selected[0])
+        self.product_window("Update Product", self.shop.catalogue[product_id])
 
-            print(f"🔄 Product {product_id} updated successfully.")
-        except ValueError:
-            print("⚠️ Invalid numeric input.")
-        except Exception as e:
-            print(f"❌ Unexpected error: {e}")
+    # ---------- PRODUCT FORM ----------
+    def product_window(self, title, product=None):
+        win = tk.Toplevel(self.root)
+        win.title(title)
 
-    def view_products(self):
-        """Display all products."""
-        print("\n📦 Product Catalogue:")
-        if not self.catalogue:
-            print("No products available.")
-        else:
-            for product in self.catalogue.values():
-                print(product)
+        labels = ["Product ID", "Name", "Category", "Price", "Stock Qty"]
+        entries = {}
+        for i, label in enumerate(labels):
+            tk.Label(win, text=label).grid(row=i, column=0, padx=10, pady=5, sticky="w")
+            entry = tk.Entry(win)
+            entry.grid(row=i, column=1, padx=10, pady=5)
+            entries[label] = entry
 
+        if product:
+            entries["Product ID"].insert(0, product.product_id)
+            entries["Product ID"].config(state="disabled")
+            entries["Name"].insert(0, product.name)
+            entries["Category"].insert(0, product.category)
+            entries["Price"].insert(0, product.price)
+            entries["Stock Qty"].insert(0, product.stock_qty)
+
+        def save():
+            try:
+                if not product:
+                    product_id = int(entries["Product ID"].get())
+                    if product_id in self.shop.catalogue:
+                        messagebox.showerror("Error", "Product ID already exists!")
+                        return
+                else:
+                    product_id = product.product_id
+
+                name = entries["Name"].get()
+                category = entries["Category"].get()
+                price = float(entries["Price"].get())
+                stock = int(entries["Stock Qty"].get())
+
+                new_product = Product(product_id, name, category, price, stock)
+                self.shop.catalogue[product_id] = new_product
+                self.load_table()
+                win.destroy()
+            except ValueError:
+                messagebox.showerror("Input Error", "Please enter valid numeric values for ID, Price, and Stock.")
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+
+        tk.Button(win, text="Save", command=save).grid(row=6, columnspan=2, pady=10)
+
+    # ---------- DELETE PRODUCT ----------
     def delete_product(self):
-        """Remove a product from the catalogue."""
-        try:
-            product_id = int(input("Enter Product ID to delete: "))
-            if product_id in self.catalogue:
-                deleted = self.catalogue.pop(product_id)
-                print(f"🗑️ Product '{deleted.name}' deleted successfully.")
-            else:
-                print("⚠️ Product not found.")
-        except ValueError:
-            print("⚠️ Invalid Product ID format.")
-        except Exception as e:
-            print(f"❌ Unexpected error: {e}")
-
-# ---------- CONTROL FLOW: MAIN MENU ----------
-def main():
-    shop = ProductCatalogue()
-
-    while True:
-        print("\n=== ☕ Coffee Shop Product Catalogue ===")
-        print("1. View All Products")
-        print("2. Add New Product")
-        print("3. Update Product")
-        print("4. Delete Product")
-        print("5. Save Catalogue")
-        print("6. Exit")
-
-        choice = input("Select an option (1-6): ")
-
-        if choice == "1":
-            shop.view_products()
-        elif choice == "2":
-            shop.add_product()
-        elif choice == "3":
-            shop.update_product()
-        elif choice == "4":
-            shop.delete_product()
-        elif choice == "5":
-            shop.save_catalogue()
-        elif choice == "6":
-            shop.save_catalogue()
-            print("👋 Exiting... Have a great day!")
-            break
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Select Product", "Please select a product to delete.")
+            return
+        
+        product_id = int(selected[0])
+        product = self.shop.catalogue.pop(product_id, None)
+        if product:
+            self.load_table()
+            messagebox.showinfo("Deleted", f"Product '{product.name}' deleted successfully.")
         else:
-            print("⚠️ Invalid choice. Please select 1–6.")
+            messagebox.showerror("Error", "Could not delete product.")
 
-# ---------- RUN PROGRAM ----------
+
+# =========================================
+# RUN APP
+# =========================================
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    app = ProductApp(root)
+    root.mainloop()
