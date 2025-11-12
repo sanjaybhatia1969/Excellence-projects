@@ -1,0 +1,366 @@
+
+
+import sqlite3
+import datetime
+import csv
+import os
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+from collections import defaultdict
+
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except Exception:
+    PANDAS_AVAILABLE = False
+
+DB_FILE = "coffee_shop.db"  # creates a file-based DB so exports can be reproducible
+LOW_STOCK_THRESHOLD = 5
+
+
+class CoffeeReportApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Coffee Shop — Revenue & Inventory Report")
+        self.geometry("1000x700")
+        self.resizable(True, True)
+
+        # Connect DB and seed data if empty
+        self.conn = sqlite3.connect(DB_FILE)
+        self.ensure_schema_and_seed()
+
+        # UI components
+        self._build_filters()
+        self._build_report_area()
+        self._build_inventory_area()
+
+        # initial load
+        self.generate_report()
+
+    # -------------------------
+    # Database schema & sample data
+    # -------------------------
+    def ensure_schema_and_seed(self):
+        c = self.conn.cursor()
+        # Products table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                category TEXT NOT NULL,
+                stock INTEGER NOT NULL,
+                price REAL NOT NULL
+            )
+        ''')
+        # Sales table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS sales (
+                id INTEGER PRIMARY KEY,
+                date TEXT NOT NULL,         -- ISO date YYYY-MM-DD
+                product_id INTEGER NOT NULL,
+                customer_type TEXT NOT NULL, -- e.g., member, vip, new
+                quantity INTEGER NOT NULL,
+                total REAL NOT NULL,
+                FOREIGN KEY(product_id) REFERENCES products(id)
+            )
+        ''')
+        self.conn.commit()
+
+        # Check if products exist; if not, seed sample data
+        c.execute("SELECT COUNT(*) FROM products")
+        if c.fetchone()[0] == 0:
+            sample_products = [
+                ("Espresso", "Beverage", 20, 3.0),
+                ("Latte", "Beverage", 8, 4.5),
+                ("Cappuccino", "Beverage", 4, 4.0),
+                ("Blueberry Muffin", "Food", 12, 2.5),
+                ("Bagel", "Food", 3, 2.0),
+                ("Cold Brew 500ml", "Beverage", 6, 5.0),
+            ]
+            c.executemany("INSERT INTO products (name, category, stock, price) VALUES (?,?,?,?)",
+                          sample_products)
+            self.conn.commit()
+
+        # Seed sales for the last 10 days if empty
+        c.execute("SELECT COUNT(*) FROM sales")
+        if c.fetchone()[0] == 0:
+            import random
+            c.execute("SELECT id, price FROM products")
+            products = c.fetchall()
+            customer_types = ["member", "vip", "new"]
+            today = datetime.date.today()
+            sales_rows = []
+            for days_ago in range(0, 10):
+                day = today - datetime.timedelta(days=days_ago)
+                for _ in range(random.randint(5, 15)):
+                    pid, price = random.choice(products)
+                    ctype = random.choices(customer_types, weights=[0.5, 0.1, 0.4])[0]
+                    qty = random.randint(1, 3)
+                    total = round(price * qty, 2)
+                    sales_rows.append((day.isoformat(), pid, ctype, qty, total))
+            c.executemany(
+                "INSERT INTO sales (date, product_id, customer_type, quantity, total) VALUES (?,?,?,?,?)",
+                sales_rows
+            )
+            self.conn.commit()
+
+    # -------------------------
+    # UI: Filters (pack)
+    # -------------------------
+    def _build_filters(self):
+        frm = ttk.Frame(self)
+        frm.pack(side="top", fill="x", padx=8, pady=6)
+
+        # Date from
+        ttk.Label(frm, text="From (YYYY-MM-DD):").pack(side="left", padx=(0, 4))
+        self.entry_from = ttk.Entry(frm, width=12)
+        self.entry_from.pack(side="left")
+        # Date to
+        ttk.Label(frm, text="To (YYYY-MM-DD):").pack(side="left", padx=(10, 4))
+        self.entry_to = ttk.Entry(frm, width=12)
+        self.entry_to.pack(side="left")
+
+        # Customer type filter
+        ttk.Label(frm, text="Customer Type:").pack(side="left", padx=(10, 4))
+        self.customer_type_var = tk.StringVar(value="All")
+        types = ["All", "member", "vip", "new"]
+        self.customer_type_menu = ttk.OptionMenu(frm, self.customer_type_var, "All", *types)
+        self.customer_type_menu.pack(side="left")
+
+        # Product category filter
+        ttk.Label(frm, text="Category:").pack(side="left", padx=(10, 4))
+        self.category_var = tk.StringVar(value="All")
+        categories = self._get_distinct_categories()
+        self.category_menu = ttk.OptionMenu(frm, self.category_var, "All", *(["All"] + categories))
+        self.category_menu.pack(side="left")
+
+        # Buttons
+        btn_gen = ttk.Button(frm, text="Generate Report", command=self.generate_report)
+        btn_gen.pack(side="left", padx=(12, 4))
+        btn_export = ttk.Button(frm, text="Export CSV", command=self.export_csv)
+        btn_export.pack(side="left")
+
+        # Fill default dates: last 7 days
+        today = datetime.date.today()
+        self.entry_to.insert(0, today.isoformat())
+        self.entry_from.insert(0, (today - datetime.timedelta(days=6)).isoformat())
+
+    def _get_distinct_categories(self):
+        c = self.conn.cursor()
+        c.execute("SELECT DISTINCT category FROM products")
+        return sorted([row[0] for row in c.fetchall()])
+
+    # -------------------------
+    # UI: Report area (pack)
+    # -------------------------
+    def _build_report_area(self):
+        # Top frame for revenue table and chart
+        top_frame = ttk.Frame(self)
+        top_frame.pack(side="top", fill="both", expand=False, padx=8, pady=6)
+
+        # Revenue table
+        rev_frame = ttk.LabelFrame(top_frame, text="Revenue by Customer Type")
+        rev_frame.pack(side="left", fill="both", expand=True, padx=(0, 6))
+        self.rev_tree = ttk.Treeview(rev_frame, columns=("customer_type", "transactions", "revenue", "avg_sale"),
+                                     show="headings", height=8)
+        for col, hd in [("customer_type", "Customer Type"), ("transactions", "# Transactions"),
+                        ("revenue", "Total Revenue"), ("avg_sale", "Avg Sale")]:
+            self.rev_tree.heading(col, text=hd)
+            self.rev_tree.column(col, anchor="center")
+        self.rev_tree.pack(side="top", fill="both", expand=True, padx=4, pady=4)
+
+        # Chart area (matplotlib)
+        chart_frame = ttk.LabelFrame(top_frame, text="Revenue Chart")
+        chart_frame.pack(side="right", fill="both", expand=True)
+        self.figure = Figure(figsize=(4, 3), dpi=100)
+        self.ax = self.figure.add_subplot(111)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=chart_frame)
+        self.canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
+
+    # -------------------------
+    # UI: Inventory area (pack)
+    # -------------------------
+    def _build_inventory_area(self):
+        inv_frame = ttk.LabelFrame(self, text="Inventory Status")
+        inv_frame.pack(side="top", fill="both", expand=True, padx=8, pady=(0, 8))
+
+        self.inv_tree = ttk.Treeview(inv_frame, columns=("id", "name", "category", "stock", "price"),
+                                     show="headings", height=8)
+        for col, hd in [("id", "ID"), ("name", "Product"), ("category", "Category"),
+                        ("stock", "Stock"), ("price", "Price")]:
+            self.inv_tree.heading(col, text=hd)
+            self.inv_tree.column(col, anchor="center")
+        self.inv_tree.pack(side="left", fill="both", expand=True, padx=4, pady=4)
+
+        # scrollbar
+        sb = ttk.Scrollbar(inv_frame, orient="vertical", command=self.inv_tree.yview)
+        self.inv_tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+
+    # -------------------------
+    # Data gathering and report generation
+    # -------------------------
+    def _parse_date(self, s, default=None):
+        try:
+            return datetime.date.fromisoformat(s.strip())
+        except Exception:
+            return default
+
+    def generate_report(self):
+        # Read filters
+        d_from = self._parse_date(self.entry_from.get(), default=None)
+        d_to = self._parse_date(self.entry_to.get(), default=None)
+        if d_from is None or d_to is None:
+            messagebox.showwarning("Invalid dates", "Please enter valid ISO dates YYYY-MM-DD.")
+            return
+        if d_from > d_to:
+            messagebox.showwarning("Invalid range", "'From' date must be <= 'To' date.")
+            return
+
+        customer_type = self.customer_type_var.get()
+        category = self.category_var.get()
+
+        # Build query with filters
+        c = self.conn.cursor()
+
+        # Sales joined with products to filter by category
+        query = """
+            SELECT s.id, s.date, p.category, s.customer_type, s.total
+            FROM sales s JOIN products p ON s.product_id = p.id
+            WHERE date BETWEEN ? AND ?
+        """
+        params = [d_from.isoformat(), d_to.isoformat()]
+        if customer_type != "All":
+            query += " AND s.customer_type = ?"
+            params.append(customer_type)
+        if category != "All":
+            query += " AND p.category = ?"
+            params.append(category)
+
+        c.execute(query, params)
+        rows = c.fetchall()
+
+        # Aggregate revenue by customer_type
+        agg = defaultdict(lambda: {"transactions": 0, "revenue": 0.0})
+        for _, _, _, ctype, total in rows:
+            agg[ctype]["transactions"] += 1
+            agg[ctype]["revenue"] += float(total)
+
+        # Average sale per customer type
+        # Clear revenue tree
+        for item in self.rev_tree.get_children():
+            self.rev_tree.delete(item)
+
+        # Insert aggregated rows (sorted)
+        for ctype in sorted(agg.keys()):
+            tcount = agg[ctype]["transactions"]
+            revenue = round(agg[ctype]["revenue"], 2)
+            avg_sale = round(revenue / tcount, 2) if tcount else 0.0
+            self.rev_tree.insert("", "end", values=(ctype, tcount, f"${revenue:.2f}", f"${avg_sale:.2f}"))
+
+        # Update chart
+        self._update_chart(agg)
+
+        # Update inventory snapshot (filtered by category if requested)
+        self._populate_inventory(category)
+
+    def _update_chart(self, agg):
+        # Clear previously drawn
+        self.ax.clear()
+
+        labels = []
+        revenues = []
+        for ctype in sorted(agg.keys()):
+            labels.append(ctype)
+            revenues.append(round(agg[ctype]["revenue"], 2))
+
+        if labels:
+            self.ax.bar(labels, revenues)
+            self.ax.set_title("Revenue by Customer Type")
+            self.ax.set_ylabel("Revenue ($)")
+        else:
+            self.ax.text(0.5, 0.5, "No data", ha="center")
+        self.figure.tight_layout()
+        self.canvas.draw()
+
+    def _populate_inventory(self, category_filter="All"):
+        c = self.conn.cursor()
+        if category_filter == "All":
+            c.execute("SELECT id, name, category, stock, price FROM products ORDER BY category, name")
+        else:
+            c.execute("SELECT id, name, category, stock, price FROM products WHERE category = ? ORDER BY name",
+                      (category_filter,))
+        rows = c.fetchall()
+
+        # Clear tree
+        for item in self.inv_tree.get_children():
+            self.inv_tree.delete(item)
+
+        for rid, name, cat, stock, price in rows:
+            # Insert with tag for low stock
+            tag = "low" if stock <= LOW_STOCK_THRESHOLD else ""
+            self.inv_tree.insert("", "end", values=(rid, name, cat, stock, f"${price:.2f}"), tags=(tag,))
+
+        # Tag styling: low stock highlighted in red-ish background
+        self.inv_tree.tag_configure("low", background="#ffd6d6")
+
+    # -------------------------
+    # Export CSV
+    # -------------------------
+    def export_csv(self):
+        # Ask where to save
+        fname = filedialog.asksaveasfilename(defaultextension=".csv",
+                                             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                                             title="Save Report As")
+        if not fname:
+            return
+
+        # Build data: revenue by customer type (current displayed)
+        rows = []
+        for iid in self.rev_tree.get_children():
+            rows.append(self.rev_tree.item(iid)["values"])
+
+        # Inventory snapshot
+        inv_rows = []
+        for iid in self.inv_tree.get_children():
+            inv_rows.append(self.inv_tree.item(iid)["values"])
+
+        # If pandas available, produce more structured export
+        try:
+            if PANDAS_AVAILABLE:
+                rev_df = pd.DataFrame(rows, columns=["Customer Type", "# Transactions", "Total Revenue", "Avg Sale"])
+                inv_df = pd.DataFrame(inv_rows, columns=["ID", "Product", "Category", "Stock", "Price"])
+                # Write to a single CSV file with two sheets? CSV can't have sheets — so create two files, or combine with separator.
+                base, ext = os.path.splitext(fname)
+                rev_file = base + "_revenue.csv"
+                inv_file = base + "_inventory.csv"
+                rev_df.to_csv(rev_file, index=False)
+                inv_df.to_csv(inv_file, index=False)
+                messagebox.showinfo("Exported", f"Exported revenue to:\n{rev_file}\nand inventory to:\n{inv_file}")
+            else:
+                # Write a single CSV with sections separated by blank lines
+                with open(fname, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Revenue by Customer Type"])
+                    writer.writerow(["Customer Type", "# Transactions", "Total Revenue", "Avg Sale"])
+                    for r in rows:
+                        writer.writerow(r)
+                    writer.writerow([])
+                    writer.writerow(["Inventory Snapshot"])
+                    writer.writerow(["ID", "Product", "Category", "Stock", "Price"])
+                    for r in inv_rows:
+                        writer.writerow(r)
+                messagebox.showinfo("Exported", f"Exported combined report to:\n{fname}\n(install pandas for separate CSV files)")
+        except Exception as e:
+            messagebox.showerror("Export Error", str(e))
+
+
+if __name__ == "__main__":
+    app = CoffeeReportApp()
+    app.mainloop()
+
