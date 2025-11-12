@@ -1,0 +1,388 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import sqlite3
+import datetime
+import csv
+
+# -------------------------------
+# DATABASE INITIALIZATION
+# -------------------------------
+def init_db():
+    conn = sqlite3.connect("customer_dashboard.db")
+    c = conn.cursor()
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            email TEXT,
+            phone TEXT,
+            address TEXT,
+            loyalty_points INTEGER
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER,
+            date TEXT,
+            items TEXT,
+            total REAL,
+            FOREIGN KEY(customer_id) REFERENCES customers(id)
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS menu (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item TEXT NOT NULL,
+            category TEXT NOT NULL,
+            price REAL NOT NULL
+        )
+    """)
+
+    # Seed default data
+    c.execute("SELECT * FROM customers WHERE name = ?", ("Ahmed Ali",))
+    if not c.fetchone():
+        c.execute("""
+            INSERT INTO customers (name, email, phone, address, loyalty_points)
+            VALUES (?, ?, ?, ?, ?)
+        """, ("Ahmed Ali", "ahmed.ali@example.com", "0212345678", "123 Queen St, Auckland", 120))
+
+        customer_id = c.lastrowid
+        sample_orders = [
+            (customer_id, (datetime.date.today() - datetime.timedelta(days=1)).isoformat(), "Latte, Muffin", 8.5),
+            (customer_id, (datetime.date.today() - datetime.timedelta(days=3)).isoformat(), "Espresso, Croissant", 7.0),
+            (customer_id, (datetime.date.today() - datetime.timedelta(days=5)).isoformat(), "Cappuccino", 4.0)
+        ]
+        c.executemany("INSERT INTO orders (customer_id, date, items, total) VALUES (?, ?, ?, ?)", sample_orders)
+
+    c.execute("SELECT COUNT(*) FROM menu")
+    if c.fetchone()[0] == 0:
+        menu_items = [
+            ("Espresso", "Beverage", 4.0),
+            ("Latte", "Beverage", 4.5),
+            ("Cappuccino", "Beverage", 5.0),
+            ("Mocha", "Beverage", 5.5),
+            ("Blueberry Muffin", "Food", 3.0),
+            ("Croissant", "Food", 3.5),
+            ("Bagel", "Food", 2.5),
+        ]
+        c.executemany("INSERT INTO menu (item, category, price) VALUES (?, ?, ?)", menu_items)
+
+    conn.commit()
+    conn.close()
+
+# -------------------------------
+# DASHBOARD CLASS
+# -------------------------------
+class CustomerDashboard(tk.Tk):
+    def __init__(self, customer_name):
+        super().__init__()
+        self.title("Coffee Shop - Customer Dashboard")
+        self.geometry("980x780")
+        self.configure(bg="#f7efe5")
+
+        # Scrollable container
+        main_frame = tk.Frame(self)
+        main_frame.pack(fill="both", expand=True)
+
+        self.canvas = tk.Canvas(main_frame, bg="#f7efe5", highlightthickness=0)
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=self.canvas.yview)
+        scrollbar.pack(side="right", fill="y")
+
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        self.scrollable_frame = tk.Frame(self.canvas, bg="#f7efe5")
+        self.scroll_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+
+        def resize_canvas(event):
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            self.canvas.itemconfig(self.scroll_window, width=event.width)
+
+        self.canvas.bind("<Configure>", resize_canvas)
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+        # Database setup
+        self.conn = sqlite3.connect("customer_dashboard.db")
+        self.c = self.conn.cursor()
+
+        self.c.execute("SELECT * FROM customers WHERE name=?", (customer_name,))
+        self.customer = self.c.fetchone()
+        self.customer_id = self.customer[0]
+
+        # Build sections
+        self.build_header()
+        self.build_loyalty_section()
+        self.build_offers()
+        self.build_menu_section()
+        self.build_orders_section()
+        self.build_profile_editor()
+        self.build_logout()
+
+    def _on_mousewheel(self, event):
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    # ---------------- HEADER ----------------
+    def build_header(self):
+        header_frame = tk.Frame(self.scrollable_frame, bg="#6f4e37", height=80)
+        header_frame.pack(fill="x")
+        tk.Label(
+            header_frame,
+            text="Welcome, Ahmed Ali! ☕",
+            font=("Helvetica", 22, "bold"),
+            fg="white",
+            bg="#6f4e37"
+        ).pack(pady=20)
+
+    # ---------------- LOYALTY ----------------
+    def build_loyalty_section(self):
+        loyalty_frame = tk.Frame(self.scrollable_frame, bg="#f7efe5")
+        loyalty_frame.pack(fill="x", pady=10)
+
+        self.points_var = tk.IntVar(value=self.customer[5])
+        self.next_tier = 200
+
+        self.loyalty_points_label = tk.Label(
+            loyalty_frame,
+            text=f"Loyalty Points: {self.points_var.get()}",
+            font=("Arial", 16, "bold"),
+            fg="#4b3832",
+            bg="#f7efe5"
+        )
+        self.loyalty_points_label.pack(pady=5)
+
+        self.progress = ttk.Progressbar(loyalty_frame, maximum=self.next_tier, length=300, mode="determinate")
+        self.progress.pack(pady=5)
+        self.progress["value"] = self.points_var.get()
+
+        self.tier_status_label = tk.Label(
+            loyalty_frame,
+            text=f"{self.points_var.get()}/{self.next_tier} points towards Gold Member Tier",
+            font=("Arial", 11),
+            bg="#f7efe5"
+        )
+        self.tier_status_label.pack()
+
+    def refresh_loyalty_display(self):
+        pts = self.points_var.get()
+        self.loyalty_points_label.config(text=f"Loyalty Points: {pts}")
+        self.progress["value"] = pts
+        self.tier_status_label.config(text=f"{pts}/{self.next_tier} points towards Gold Member Tier")
+
+    def update_loyalty_points(self, purchase_total):
+        add = int(purchase_total)
+        new_points = min(self.points_var.get() + add, self.next_tier)
+        self.points_var.set(new_points)
+        self.c.execute("UPDATE customers SET loyalty_points=? WHERE id=?", (new_points, self.customer_id))
+        self.conn.commit()
+        self.refresh_loyalty_display()
+
+    # ---------------- OFFERS ----------------
+    def build_offers(self):
+        offer_frame = tk.LabelFrame(self.scrollable_frame, text="Special Offers", bg="#f7efe5", font=("Arial", 13, "bold"))
+        offer_frame.pack(fill="x", padx=20, pady=10)
+        tk.Label(
+            offer_frame,
+            text="- Get 20% off any Latte this week!\n- Earn double points on Muffin purchases today!",
+            font=("Arial", 12),
+            bg="#f7efe5",
+            justify="left"
+        ).pack(pady=8, padx=10)
+
+    # ---------------- MENU ----------------
+    def build_menu_section(self):
+        menu_frame = tk.LabelFrame(self.scrollable_frame, text="Menu", bg="#f7efe5", font=("Arial", 13, "bold"))
+        menu_frame.pack(fill="x", padx=20, pady=10)
+
+        cols = ("item", "category", "price")
+        self.menu_tree = ttk.Treeview(menu_frame, columns=cols, show="headings", height=6)
+        for col, hd, w in [("item", "Item", 220), ("category", "Category", 120), ("price", "Price ($)", 100)]:
+            self.menu_tree.heading(col, text=hd)
+            self.menu_tree.column(col, anchor="center", width=w)
+        self.menu_tree.pack(fill="x", padx=10, pady=5)
+
+        self.c.execute("SELECT item, category, price FROM menu ORDER BY category, item")
+        for item, cat, price in self.c.fetchall():
+            self.menu_tree.insert("", "end", values=(item, cat, f"{price:.2f}"))
+
+        ctrl = tk.Frame(menu_frame, bg="#f7efe5")
+        ctrl.pack(fill="x", padx=10, pady=5)
+        tk.Label(ctrl, text="Quantity:", bg="#f7efe5", font=("Arial", 11, "bold")).pack(side="left")
+        self.qty_var = tk.IntVar(value=1)
+        tk.Spinbox(ctrl, from_=1, to=20, textvariable=self.qty_var, width=5).pack(side="left")
+        tk.Button(ctrl, text="Add to Cart", bg="#6f4e37", fg="white",
+                  font=("Arial", 11, "bold"), command=self.add_to_cart).pack(side="left", padx=8)
+        tk.Button(ctrl, text="Place Order", bg="#a9745b", fg="white",
+                  font=("Arial", 11, "bold"), command=self.place_order).pack(side="left", padx=4)
+
+        cart_frame = tk.Frame(menu_frame, bg="#f7efe5")
+        cart_frame.pack(fill="x", padx=10, pady=(5, 0))
+        tk.Label(cart_frame, text="Cart:", bg="#f7efe5", font=("Arial", 11, "bold")).pack(anchor="w")
+
+        cart_cols = ("item", "qty", "price", "subtotal")
+        self.cart_tree = ttk.Treeview(cart_frame, columns=cart_cols, show="headings", height=4)
+        for col, hd, w in [("item","Item",220),("qty","Qty",60),("price","Price ($)",100),("subtotal","Subtotal ($)",120)]:
+            self.cart_tree.heading(col, text=hd)
+            self.cart_tree.column(col, anchor="center", width=w)
+        self.cart_tree.pack(fill="x", padx=0, pady=4)
+
+        self.cart_total_var = tk.StringVar(value="Total: $0.00")
+        tk.Label(menu_frame, textvariable=self.cart_total_var, bg="#f7efe5",
+                 font=("Arial", 12, "bold")).pack(anchor="e", padx=12)
+
+    def add_to_cart(self):
+        selected = self.menu_tree.selection()
+        if not selected:
+            messagebox.showwarning("Select Item", "Please select a menu item.")
+            return
+        item, category, price_str = self.menu_tree.item(selected[0])["values"]
+        qty = max(1, int(self.qty_var.get()))
+        price = float(price_str)
+        subtotal = price * qty
+        self.cart_tree.insert("", "end", values=(item, qty, f"{price:.2f}", f"{subtotal:.2f}"))
+        self._recalc_cart_total()
+
+    def _recalc_cart_total(self):
+        total = sum(float(self.cart_tree.item(i)["values"][3]) for i in self.cart_tree.get_children())
+        self.cart_total_var.set(f"Total: ${total:.2f}")
+
+    def place_order(self):
+        items = []
+        total = 0.0
+        for iid in self.cart_tree.get_children():
+            it, qty, price, sub = self.cart_tree.item(iid)["values"]
+            items.append(f"{it} x{qty}")
+            total += float(sub)
+        if not items:
+            messagebox.showwarning("Cart Empty", "Please add items to the cart.")
+            return
+
+        self.c.execute("INSERT INTO orders (customer_id, date, items, total) VALUES (?, ?, ?, ?)",
+                       (self.customer_id, datetime.date.today().isoformat(), ", ".join(items), round(total, 2)))
+        self.conn.commit()
+        for iid in self.cart_tree.get_children():
+            self.cart_tree.delete(iid)
+        self._recalc_cart_total()
+        self.populate_orders()
+        self.update_loyalty_points(total)
+        messagebox.showinfo("Order Placed", f"Your order has been placed.\nTotal: ${total:.2f}")
+
+    # ---------------- ORDER HISTORY (now scrollable) ----------------
+    def build_orders_section(self):
+        orders_frame = tk.LabelFrame(self.scrollable_frame, text="Order History", bg="#f7efe5", font=("Arial", 13, "bold"))
+        orders_frame.pack(fill="x", padx=20, pady=10)
+
+        columns = ("date", "items", "total")
+        tree_frame = tk.Frame(orders_frame, bg="#f7efe5")
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        scrollbar_y = ttk.Scrollbar(tree_frame, orient="vertical")
+        scrollbar_y.pack(side="right", fill="y")
+
+        self.orders_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=6, yscrollcommand=scrollbar_y.set)
+        scrollbar_y.config(command=self.orders_tree.yview)
+
+        for col, hd in zip(columns, ["Date", "Items", "Total ($)"]):
+            self.orders_tree.heading(col, text=hd)
+            self.orders_tree.column(col, anchor="center", width=150)
+        self.orders_tree.pack(fill="both", expand=True)
+
+        btn_frame = tk.Frame(orders_frame, bg="#f7efe5")
+        btn_frame.pack(pady=5)
+        tk.Button(btn_frame, text="Reorder Selected", bg="#6f4e37", fg="white",
+                  font=("Arial", 11, "bold"), command=self.reorder_item).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Export to CSV", bg="#a9745b", fg="white",
+                  font=("Arial", 11, "bold"), command=self.export_orders).pack(side="left", padx=5)
+
+        self.populate_orders()
+
+    def populate_orders(self):
+        self.orders_tree.delete(*self.orders_tree.get_children())
+        self.c.execute("SELECT date, items, total FROM orders WHERE customer_id=? ORDER BY date DESC", (self.customer_id,))
+        for row in self.c.fetchall():
+            self.orders_tree.insert("", "end", values=row)
+
+    def reorder_item(self):
+        selected = self.orders_tree.selection()
+        if not selected:
+            messagebox.showwarning("Select Order", "Please select an order to reorder.")
+            return
+        order = self.orders_tree.item(selected[0])["values"]
+        self.c.execute("INSERT INTO orders (customer_id, date, items, total) VALUES (?, ?, ?, ?)",
+                       (self.customer_id, datetime.date.today().isoformat(), order[1], float(order[2])))
+        self.conn.commit()
+        self.populate_orders()
+        self.update_loyalty_points(float(order[2]))
+        messagebox.showinfo("Reordered", f"Your order '{order[1]}' has been placed again!")
+
+    def export_orders(self):
+        file = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV Files", "*.csv")])
+        if not file:
+            return
+        self.c.execute("SELECT date, items, total FROM orders WHERE customer_id=?", (self.customer_id,))
+        rows = self.c.fetchall()
+        with open(file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Date", "Items", "Total ($)"])
+            writer.writerows(rows)
+        messagebox.showinfo("Export Successful", f"Order history exported to:\n{file}")
+
+    # ---------------- PROFILE ----------------
+    def build_profile_editor(self):
+        profile_frame = tk.LabelFrame(self.scrollable_frame, text="Edit Personal Details", bg="#f7efe5", font=("Arial", 13, "bold"))
+        profile_frame.pack(fill="x", padx=20, pady=10)
+
+        labels = ["Name:", "Email:", "Phone:", "Address:"]
+        self.entries = {}
+        data = self.customer[1:5]
+
+        for i, label in enumerate(labels):
+            row = tk.Frame(profile_frame, bg="#f7efe5")
+            row.pack(fill="x", pady=4)
+            tk.Label(row, text=label, font=("Arial", 12, "bold"), bg="#f7efe5", width=10, anchor="w").pack(side="left", padx=10)
+            entry = tk.Entry(row, font=("Arial", 12), width=40)
+            entry.insert(0, data[i])
+            entry.pack(side="left", padx=5)
+            self.entries[label[:-1].lower()] = entry
+
+        tk.Button(profile_frame, text="Save Changes", bg="#6f4e37", fg="white",
+                  font=("Arial", 12, "bold"), command=self.save_changes).pack(pady=8)
+
+    def save_changes(self):
+        name = self.entries["name"].get().strip()
+        email = self.entries["email"].get().strip()
+        phone = self.entries["phone"].get().strip()
+        address = self.entries["address"].get().strip()
+
+        if not name or not email:
+            messagebox.showwarning("Input Error", "Name and Email cannot be empty.")
+            return
+        if "@" not in email:
+            messagebox.showwarning("Input Error", "Please enter a valid email address.")
+            return
+
+        self.c.execute("UPDATE customers SET name=?, email=?, phone=?, address=? WHERE id=?",
+                       (name, email, phone, address, self.customer_id))
+        self.conn.commit()
+        messagebox.showinfo("Success", "Your details have been updated successfully!")
+
+    # ---------------- LOGOUT ----------------
+    def build_logout(self):
+        tk.Button(self.scrollable_frame, text="Logout", font=("Arial", 12, "bold"),
+                  bg="#a9745b", fg="white", command=self.logout).pack(pady=25)
+
+    def logout(self):
+        messagebox.showinfo("Logout", "You have been logged out successfully.")
+        self.destroy()
+
+
+# -------------------------------
+# RUN
+# -------------------------------
+if __name__ == "__main__":
+    init_db()
+    app = CustomerDashboard("Ahmed Ali")
+    app.mainloop()
