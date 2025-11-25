@@ -1,0 +1,457 @@
+# membership_checkout.py
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import sqlite3
+import os
+
+# Try to import Pillow for avatar support; if unavailable, continue without image.
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
+except Exception:
+    PIL_AVAILABLE = False
+
+DB_FILENAME = "customers_membership.db"
+# Developer-provided uploaded image path (local). The environment/tooling will transform this as needed.
+IMAGE_PATH = '/mnt/data/fec38185-bef4-46af-a475-dc9b127baafd.jpg'
+
+# Membership tiers and discounts (percentage)
+MEMBERSHIP_DISCOUNTS = {
+    "None": 0,
+    "Bronze": 5,
+    "Silver": 10,
+    "Gold": 15,
+    "Platinum": 20
+}
+
+#  Database helpers 
+def init_db():
+    conn = sqlite3.connect(DB_FILENAME)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            phone TEXT,
+            address TEXT,
+            membership TEXT DEFAULT 'None'
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def insert_customer(name, phone, address, membership):
+    conn = sqlite3.connect(DB_FILENAME)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO customers (name, phone, address, membership) VALUES (?, ?, ?, ?)",
+                (name, phone, address, membership))
+    conn.commit()
+    conn.close()
+
+def update_customer_db(cid, name, phone, address, membership):
+    conn = sqlite3.connect(DB_FILENAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE customers SET name = ?, phone = ?, address = ?, membership = ? WHERE id = ?",
+                (name, phone, address, membership, cid))
+    conn.commit()
+    conn.close()
+
+def delete_customer_db(cid):
+    conn = sqlite3.connect(DB_FILENAME)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM customers WHERE id = ?", (cid,))
+    conn.commit()
+    conn.close()
+
+def fetch_customers(search_term=None):
+    conn = sqlite3.connect(DB_FILENAME)
+    cur = conn.cursor()
+    if search_term:
+        q = f"%{search_term}%"
+        cur.execute("SELECT id, name, phone, address, membership FROM customers WHERE name LIKE ? OR phone LIKE ? OR address LIKE ? ORDER BY id DESC",
+                    (q, q, q))
+    else:
+        cur.execute("SELECT id, name, phone, address, membership FROM customers ORDER BY id DESC")
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+def fetch_customer_by_id(cid):
+    conn = sqlite3.connect(DB_FILENAME)
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, phone, address, membership FROM customers WHERE id = ?", (cid,))
+    r = cur.fetchone()
+    conn.close()
+    return r
+
+#  Utility 
+def format_currency(v):
+    try:
+        return f"${v:,.2f}"
+    except Exception:
+        return str(v)
+
+#  Main App 
+class MembershipCheckoutApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Membership Checkout — Staff Portal")
+        self.geometry("1100x650")
+        self.minsize(1000, 600)
+        self.style = ttk.Style(self)
+        try:
+            self.style.theme_use('clam')
+        except Exception:
+            pass
+
+        self.selected_customer_id = None
+        self.cart_items = []  # list of dicts: {name, price, qty}
+        self.avatar_img = None
+
+        self.create_widgets()
+        self.refresh_customer_table()
+        self.refresh_customer_dropdown()
+
+    def create_widgets(self):
+        # Top frame for customer form + avatar
+        top_frame = ttk.Frame(self, padding=10)
+        top_frame.pack(fill='x')
+
+        left = ttk.Frame(top_frame)
+        left.pack(side='left', fill='y', padx=(0,12))
+
+        # Avatar
+        self.avatar_label = ttk.Label(left, text="No Avatar")
+        self.avatar_label.pack(pady=(0,8))
+        if PIL_AVAILABLE:
+            self.load_avatar(IMAGE_PATH)
+
+        btn_img = ttk.Button(left, text="Change Avatar", command=self.change_avatar)
+        btn_img.pack(fill='x')
+
+        # Customer Form
+        form_frame = ttk.Frame(top_frame)
+        form_frame.pack(side='left', fill='x', expand=True)
+
+        ttk.Label(form_frame, text="Name:").grid(row=0, column=0, sticky='w')
+        self.name_entry = ttk.Entry(form_frame, width=40)
+        self.name_entry.grid(row=0, column=1, sticky='w', padx=6, pady=4)
+
+        ttk.Label(form_frame, text="Phone:").grid(row=1, column=0, sticky='w')
+        self.phone_entry = ttk.Entry(form_frame, width=40)
+        self.phone_entry.grid(row=1, column=1, sticky='w', padx=6, pady=4)
+
+        ttk.Label(form_frame, text="Address:").grid(row=2, column=0, sticky='nw')
+        self.address_text = tk.Text(form_frame, width=40, height=3)
+        self.address_text.grid(row=2, column=1, sticky='w', padx=6, pady=4)
+
+        ttk.Label(form_frame, text="Membership Tier:").grid(row=3, column=0, sticky='w')
+        self.membership_cb = ttk.Combobox(form_frame, values=list(MEMBERSHIP_DISCOUNTS.keys()), state='readonly')
+        self.membership_cb.grid(row=3, column=1, sticky='w', padx=6)
+        self.membership_cb.set("None")
+
+        # Buttons
+        btn_frame = ttk.Frame(form_frame)
+        btn_frame.grid(row=4, column=1, pady=(8,0), sticky='w')
+        ttk.Button(btn_frame, text="Add Customer", command=self.add_customer).grid(row=0, column=0, padx=4)
+        ttk.Button(btn_frame, text="Update Customer", command=self.update_customer).grid(row=0, column=1, padx=4)
+        ttk.Button(btn_frame, text="Delete Customer", command=self.delete_customer).grid(row=0, column=2, padx=4)
+        ttk.Button(btn_frame, text="Clear Form", command=self.clear_form).grid(row=0, column=3, padx=4)
+
+        # Middle: Customer list + search
+        mid_frame = ttk.Frame(self, padding=(10,0))
+        mid_frame.pack(fill='both', expand=False)
+
+        left_mid = ttk.Frame(mid_frame)
+        left_mid.pack(side='left', fill='both', expand=True, padx=(0,8))
+
+        search_row = ttk.Frame(left_mid)
+        search_row.pack(fill='x', pady=(4,6))
+        ttk.Label(search_row, text="Search:").pack(side='left')
+        self.search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_row, textvariable=self.search_var)
+        search_entry.pack(side='left', fill='x', expand=True, padx=6)
+        search_entry.bind('<Return>', lambda e: self.refresh_customer_table())
+        ttk.Button(search_row, text="Search", command=self.refresh_customer_table).pack(side='left', padx=4)
+        ttk.Button(search_row, text="Clear", command=self.clear_search).pack(side='left')
+
+        columns = ('id','name','phone','membership')
+        self.tree = ttk.Treeview(left_mid, columns=columns, show='headings', selectmode='browse', height=8)
+        for col, w, txt in (('id',50,'ID'),('name',240,'Name'),('phone',140,'Phone'),('membership',120,'Membership')):
+            self.tree.heading(col, text=txt)
+            self.tree.column(col, width=w, anchor='w' if col=='name' else 'center')
+        self.tree.pack(fill='both', expand=True)
+        self.tree.bind("<Double-1>", self.on_tree_double_click)
+
+        # Right side: Checkout panel
+        right_mid = ttk.Frame(mid_frame, relief='ridge', padding=10)
+        right_mid.pack(side='left', fill='both', expand=False)
+
+        ttk.Label(right_mid, text="Checkout", font=('Arial', 12, 'bold')).pack(anchor='w')
+
+        # Customer selection for checkout
+        ttk.Label(right_mid, text="Select Customer:").pack(anchor='w', pady=(8,0))
+        self.checkout_customer_var = tk.StringVar()
+        self.checkout_customer_cb = ttk.Combobox(right_mid, textvariable=self.checkout_customer_var, state='readonly')
+        self.checkout_customer_cb.pack(fill='x')
+        self.checkout_customer_cb.bind("<<ComboboxSelected>>", lambda e: self.on_checkout_customer_change())
+
+        # Cart area
+        cart_frame = ttk.Frame(right_mid)
+        cart_frame.pack(fill='both', pady=(8,0))
+        ttk.Label(cart_frame, text="Item name").grid(row=0,column=0, sticky='w')
+        ttk.Label(cart_frame, text="Price").grid(row=0,column=1)
+        ttk.Label(cart_frame, text="Qty").grid(row=0,column=2)
+        self.item_name_entry = ttk.Entry(cart_frame, width=18)
+        self.item_name_entry.grid(row=1,column=0, padx=4, pady=4)
+        self.item_price_entry = ttk.Entry(cart_frame, width=10)
+        self.item_price_entry.grid(row=1,column=1, padx=4)
+        self.item_qty_entry = ttk.Entry(cart_frame, width=6)
+        self.item_qty_entry.grid(row=1,column=2, padx=4)
+        ttk.Button(cart_frame, text="Add to Cart", command=self.add_to_cart).grid(row=1,column=3, padx=6)
+
+        # Cart Tree
+        cart_cols = ('name','price','qty','total')
+        self.cart_tree = ttk.Treeview(right_mid, columns=cart_cols, show='headings', height=6)
+        for col, w, txt in (('name',140,'Item'),('price',80,'Price'),('qty',60,'Qty'),('total',100,'Total')):
+            self.cart_tree.heading(col, text=txt)
+            self.cart_tree.column(col, width=w, anchor='center')
+        self.cart_tree.pack(fill='both', pady=(8,0))
+
+        ttk.Button(right_mid, text="Remove Selected Item", command=self.remove_selected_cart_item).pack(pady=(4,0))
+
+        # Totals & discount display
+        totals_frame = ttk.Frame(right_mid)
+        totals_frame.pack(fill='x', pady=(8,0))
+        ttk.Label(totals_frame, text="Subtotal:").grid(row=0,column=0, sticky='w')
+        self.subtotal_var = tk.StringVar(value=format_currency(0.0))
+        ttk.Label(totals_frame, textvariable=self.subtotal_var).grid(row=0,column=1, sticky='e')
+
+        ttk.Label(totals_frame, text="Discount:").grid(row=1,column=0, sticky='w')
+        self.discount_var = tk.StringVar(value=format_currency(0.0))
+        ttk.Label(totals_frame, textvariable=self.discount_var).grid(row=1,column=1, sticky='e')
+
+        ttk.Label(totals_frame, text="Total:").grid(row=2,column=0, sticky='w')
+        self.total_var = tk.StringVar(value=format_currency(0.0))
+        ttk.Label(totals_frame, textvariable=self.total_var).grid(row=2,column=1, sticky='e')
+
+        ttk.Button(right_mid, text="Complete Checkout", command=self.complete_checkout).pack(fill='x', pady=(8,0))
+
+        # Footer note
+        footer = ttk.Label(self, text="Double-click customer row to load into form. Membership discounts are applied automatically at checkout.")
+        footer.pack(side='bottom', fill='x', pady=6)
+
+    # avatar functions 
+    def load_avatar(self, path):
+        if not PIL_AVAILABLE:
+            return
+        try:
+            img = Image.open(path)
+            img.thumbnail((140,140))
+            self.avatar_img = ImageTk.PhotoImage(img)
+            self.avatar_label.configure(image=self.avatar_img, text='')
+        except Exception:
+            self.avatar_label.configure(text="No Avatar")
+
+    def change_avatar(self):
+        if not PIL_AVAILABLE:
+            messagebox.showinfo("Pillow required", "Image support requires Pillow. Install with:\n\npip install pillow")
+            return
+        p = filedialog.askopenfilename(title="Select avatar", filetypes=[("Image files","*.png;*.jpg;*.jpeg;*.gif;*.bmp"),("All","*.*")])
+        if p:
+            self.load_avatar(p)
+
+    #  customer functions 
+    def add_customer(self):
+        name = self.name_entry.get().strip()
+        phone = self.phone_entry.get().strip()
+        address = self.address_text.get("1.0", tk.END).strip()
+        membership = self.membership_cb.get() or "None"
+        if not name:
+            messagebox.showwarning("Validation", "Please enter a name.")
+            return
+        insert_customer(name, phone, address, membership)
+        messagebox.showinfo("Added", f"Customer '{name}' added.")
+        self.clear_form()
+        self.refresh_customer_table()
+        self.refresh_customer_dropdown()
+
+    def update_customer(self):
+        if not self.selected_customer_id:
+            messagebox.showwarning("Select", "Select a customer to update.")
+            return
+        name = self.name_entry.get().strip()
+        phone = self.phone_entry.get().strip()
+        address = self.address_text.get("1.0", tk.END).strip()
+        membership = self.membership_cb.get() or "None"
+        if not name:
+            messagebox.showwarning("Validation", "Please enter a name.")
+            return
+        update_customer_db(self.selected_customer_id, name, phone, address, membership)
+        messagebox.showinfo("Updated", "Customer updated.")
+        self.clear_form()
+        self.refresh_customer_table()
+        self.refresh_customer_dropdown()
+
+    def delete_customer(self):
+        if not self.selected_customer_id:
+            messagebox.showwarning("Select", "Select a customer to delete.")
+            return
+        if messagebox.askyesno("Confirm", "Delete selected customer?"):
+            delete_customer_db(self.selected_customer_id)
+            self.clear_form()
+            self.refresh_customer_table()
+            self.refresh_customer_dropdown()
+
+    def clear_form(self):
+        self.selected_customer_id = None
+        self.name_entry.delete(0, tk.END)
+        self.phone_entry.delete(0, tk.END)
+        self.address_text.delete("1.0", tk.END)
+        self.membership_cb.set("None")
+        for sel in self.tree.selection():
+            self.tree.selection_remove(sel)
+
+    def clear_search(self):
+        self.search_var.set('')
+        self.refresh_customer_table()
+
+    def refresh_customer_table(self):
+        for r in self.tree.get_children():
+            self.tree.delete(r)
+        rows = fetch_customers(self.search_var.get().strip() or None)
+        for r in rows:
+            cid, name, phone, address, membership = r
+            display_phone = phone or ''
+            self.tree.insert('', tk.END, values=(cid, name, display_phone, membership))
+
+    def on_tree_double_click(self, event):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        item = self.tree.item(sel[0])
+        cid = item['values'][0]
+        rec = fetch_customer_by_id(cid)
+        if rec:
+            self.selected_customer_id = rec[0]
+            self.name_entry.delete(0, tk.END)
+            self.name_entry.insert(0, rec[1])
+            self.phone_entry.delete(0, tk.END)
+            self.phone_entry.insert(0, rec[2] or '')
+            self.address_text.delete("1.0", tk.END)
+            self.address_text.insert("1.0", rec[3] or '')
+            self.membership_cb.set(rec[4] or "None")
+            # keep selection
+            self.tree.selection_set(sel[0])
+
+    def refresh_customer_dropdown(self):
+        rows = fetch_customers()
+        # Build list like "id - Name (Tier)"
+        entries = ["None"]
+        mapping = {"None": None}
+        for r in rows:
+            cid, name, phone, address, membership = r
+            label = f"{cid} - {name} ({membership})"
+            entries.append(label)
+            mapping[label] = cid
+        self.checkout_mapping = mapping
+        self.checkout_customer_cb['values'] = entries
+        self.checkout_customer_cb.set("None")
+
+    # cart / checkout 
+    def add_to_cart(self):
+        name = self.item_name_entry.get().strip()
+        price_text = self.item_price_entry.get().strip()
+        qty_text = self.item_qty_entry.get().strip() or "1"
+        if not name or not price_text:
+            messagebox.showwarning("Validation", "Enter item name and price.")
+            return
+        try:
+            price = float(price_text)
+            qty = int(qty_text)
+            if price < 0 or qty <= 0:
+                raise ValueError
+        except Exception:
+            messagebox.showwarning("Validation", "Invalid price or quantity.")
+            return
+        item = {"name": name, "price": price, "qty": qty, "total": price * qty}
+        self.cart_items.append(item)
+        self.refresh_cart()
+        # clear fields
+        self.item_name_entry.delete(0, tk.END)
+        self.item_price_entry.delete(0, tk.END)
+        self.item_qty_entry.delete(0, tk.END)
+
+    def refresh_cart(self):
+        for r in self.cart_tree.get_children():
+            self.cart_tree.delete(r)
+        subtotal = 0.0
+        for i, it in enumerate(self.cart_items, start=1):
+            subtotal += it['total']
+            self.cart_tree.insert('', tk.END, iid=str(i-1), values=(it['name'], format_currency(it['price']), it['qty'], format_currency(it['total'])))
+        self.subtotal_value = subtotal
+        self.update_totals_display()
+
+    def remove_selected_cart_item(self):
+        sel = self.cart_tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        try:
+            idx = int(iid)
+            del self.cart_items[idx]
+            self.refresh_cart()
+        except Exception:
+            pass
+
+    def on_checkout_customer_change(self):
+        # Recalculate totals when customer changes
+        self.update_totals_display()
+
+    def get_selected_checkout_customer_membership(self):
+        sel = self.checkout_customer_cb.get()
+        if not sel or sel == "None":
+            return "None"
+        cid = self.checkout_mapping.get(sel)
+        if cid is None:
+            return "None"
+        rec = fetch_customer_by_id(cid)
+        if not rec:
+            return "None"
+        return rec[4] or "None"
+
+    def calculate_discount_amount(self, subtotal, membership_tier):
+        pct = MEMBERSHIP_DISCOUNTS.get(membership_tier, 0)
+        return subtotal * (pct / 100.0)
+
+    def update_totals_display(self):
+        subtotal = getattr(self, 'subtotal_value', 0.0)
+        membership = self.get_selected_checkout_customer_membership()
+        discount_amt = self.calculate_discount_amount(subtotal, membership)
+        total = subtotal - discount_amt
+        self.subtotal_var.set(format_currency(subtotal))
+        self.discount_var.set(f"{MEMBERSHIP_DISCOUNTS.get(membership,0)}%  (-{format_currency(discount_amt)})")
+        self.total_var.set(format_currency(total))
+
+    def complete_checkout(self):
+        if not self.cart_items:
+            messagebox.showwarning("Empty Cart", "Add items to the cart first.")
+            return
+        membership = self.get_selected_checkout_customer_membership()
+        subtotal = getattr(self, 'subtotal_value', 0.0)
+        discount_amt = self.calculate_discount_amount(subtotal, membership)
+        total = subtotal - discount_amt
+
+        # For demo, we'll just show a confirmation and clear cart.
+        msg = f"Checkout complete.\n\nSubtotal: {format_currency(subtotal)}\nMembership: {membership}\nDiscount: {format_currency(discount_amt)}\nTotal: {format_currency(total)}"
+        messagebox.showinfo("Checkout", msg)
+        # Clear cart
+        self.cart_items = []
+        self.refresh_cart()
+        self.update_totals_display()
+
+# Run App 
+if __name__ == "__main__":
+    init_db()
+    app = MembershipCheckoutApp()
+    app.mainloop()
