@@ -1,0 +1,310 @@
+# customer_manager.py
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import sqlite3
+import os
+from PIL import Image, ImageTk
+
+#  Config 
+DB_FILENAME = "customers.db"
+# Use the uploaded file path (developer message)
+IMAGE_PATH = '/mnt/data/fec38185-bef4-46af-a475-dc9b127baafd.jpg'
+
+
+# Database helpers
+def init_db():
+    conn = sqlite3.connect(DB_FILENAME)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            phone TEXT,
+            address TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def insert_customer(name, phone, address):
+    conn = sqlite3.connect(DB_FILENAME)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)",
+                (name, phone, address))
+    conn.commit()
+    conn.close()
+
+def update_customer_db(cid, name, phone, address):
+    conn = sqlite3.connect(DB_FILENAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE customers SET name = ?, phone = ?, address = ? WHERE id = ?",
+                (name, phone, address, cid))
+    conn.commit()
+    conn.close()
+
+def delete_customer_db(cid):
+    conn = sqlite3.connect(DB_FILENAME)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM customers WHERE id = ?", (cid,))
+    conn.commit()
+    conn.close()
+
+def fetch_customers(search_term=None):
+    conn = sqlite3.connect(DB_FILENAME)
+    cur = conn.cursor()
+    if search_term:
+        q = f"%{search_term}%"
+        cur.execute("SELECT id, name, phone, address FROM customers WHERE name LIKE ? OR phone LIKE ? OR address LIKE ? ORDER BY id DESC",
+                    (q, q, q))
+    else:
+        cur.execute("SELECT id, name, phone, address FROM customers ORDER BY id DESC")
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+# Utility: convert numeric strings to binary; if non-digit, leave as-is
+def phone_to_binary(phone_str):
+    # handle possible separators/spaces: convert digits to binary preserving non-digits
+    result_chars = []
+    for ch in phone_str:
+        if ch.isdigit():
+            # convert digit char to binary of the digit value (0-9)
+            b = format(int(ch), 'b')
+            result_chars.append(b)
+        else:
+            result_chars.append(ch)
+    return ''.join(result_chars)
+
+# Main App
+class CustomerManager(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Customer Register — Staff Portal")
+        self.geometry("920x600")
+        self.minsize(860, 520)
+        # make app look tidy
+        self.style = ttk.Style(self)
+        self.style.theme_use('clam')
+
+        # state
+        self.selected_customer_id = None
+        # default per your saved preference: phone numbers shown in binary by default
+        self.show_binary = tk.BooleanVar(value=True)
+
+        self.create_widgets()
+        self.refresh_table()
+
+    def create_widgets(self):
+        # Left frame: Form + avatar
+        left = ttk.Frame(self, padding=(12,12))
+        left.pack(side=tk.LEFT, fill=tk.Y, padx=(8,4))
+
+        # Avatar image
+        self.avatar_label = ttk.Label(left)
+        self.avatar_label.pack(pady=(0,10))
+        self.load_avatar(IMAGE_PATH)
+
+        # Button to pick a different image (optional)
+        btn_img = ttk.Button(left, text="Change Avatar Image", command=self.change_avatar)
+        btn_img.pack(pady=(0,12), fill='x')
+
+        form = ttk.Frame(left)
+        form.pack(fill=tk.X)
+
+        ttk.Label(form, text="Name:").grid(row=0, column=0, sticky=tk.W, pady=4)
+        self.name_entry = ttk.Entry(form, width=35)
+        self.name_entry.grid(row=0, column=1, pady=4, padx=6)
+
+        ttk.Label(form, text="Contact Number:").grid(row=1, column=0, sticky=tk.W, pady=4)
+        self.phone_entry = ttk.Entry(form, width=35)
+        self.phone_entry.grid(row=1, column=1, pady=4, padx=6)
+
+        ttk.Label(form, text="Address:").grid(row=2, column=0, sticky=tk.NW, pady=4)
+        self.address_text = tk.Text(form, width=26, height=5)
+        self.address_text.grid(row=2, column=1, pady=4, padx=6)
+
+        # Controls
+        ctrl = ttk.Frame(left)
+        ctrl.pack(pady=8, fill='x')
+
+        self.add_btn = ttk.Button(ctrl, text="Add Customer", command=self.add_customer)
+        self.add_btn.grid(row=0, column=0, padx=4, pady=4)
+
+        self.update_btn = ttk.Button(ctrl, text="Update Selected", command=self.update_customer)
+        self.update_btn.grid(row=0, column=1, padx=4, pady=4)
+
+        self.delete_btn = ttk.Button(ctrl, text="Delete Selected", command=self.delete_customer)
+        self.delete_btn.grid(row=0, column=2, padx=4, pady=4)
+
+        self.clear_btn = ttk.Button(ctrl, text="Clear Form", command=self.clear_form)
+        self.clear_btn.grid(row=1, column=0, columnspan=3, sticky='we', padx=4, pady=(4,0))
+
+        # Binary toggle and export
+        bottom_ctrl = ttk.Frame(left)
+        bottom_ctrl.pack(pady=(8,0), fill='x')
+        chk = ttk.Checkbutton(bottom_ctrl, text="Show contact numbers in binary (default)", variable=self.show_binary, command=self.refresh_table)
+        chk.pack(anchor='w')
+
+        export_btn = ttk.Button(bottom_ctrl, text="Export CSV", command=self.export_csv)
+        export_btn.pack(fill='x', pady=(8,0))
+
+        # Right frame: Search + Table
+        right = ttk.Frame(self, padding=(12,12))
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        search_frame = ttk.Frame(right)
+        search_frame.pack(fill='x')
+
+        ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT)
+        self.search_var = tk.StringVar()
+        self.search_entry = ttk.Entry(search_frame, textvariable=self.search_var)
+        self.search_entry.pack(side=tk.LEFT, fill='x', expand=True, padx=8)
+        self.search_entry.bind('<Return>', lambda e: self.refresh_table())
+
+        search_btn = ttk.Button(search_frame, text="Search", command=self.refresh_table)
+        search_btn.pack(side=tk.LEFT, padx=(4,0))
+        clear_search = ttk.Button(search_frame, text="Clear", command=self.clear_search)
+        clear_search.pack(side=tk.LEFT, padx=(4,0))
+
+        # Treeview table
+        columns = ('id', 'name', 'phone', 'address')
+        self.tree = ttk.Treeview(right, columns=columns, show='headings', selectmode='browse')
+        self.tree.heading('id', text='ID')
+        self.tree.column('id', width=50, anchor='center')
+        self.tree.heading('name', text='Name')
+        self.tree.column('name', width=180, anchor='w')
+        self.tree.heading('phone', text='Contact')
+        self.tree.column('phone', width=160, anchor='center')
+        self.tree.heading('address', text='Address')
+        self.tree.column('address', width=320, anchor='w')
+
+        vsb = ttk.Scrollbar(right, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(fill=tk.BOTH, expand=True, pady=(8,0))
+
+        # Bind double-click to load into form
+        self.tree.bind("<Double-1>", self.on_tree_double_click)
+
+        # Footer: instructions
+        footer = ttk.Label(right, text="Double-click a row to load for editing. Phone numbers display as binary by default.")
+        footer.pack(pady=(8,0))
+
+    def load_avatar(self, path):
+        # Try to load image; if fails, show placeholder text
+        try:
+            img = Image.open(path)
+            img.thumbnail((180,180))
+            self.avatar_img = ImageTk.PhotoImage(img)
+            self.avatar_label.configure(image=self.avatar_img, text='')
+        except Exception as e:
+            self.avatar_label.configure(text="No avatar\n(put a valid path)", image='')
+
+    def change_avatar(self):
+        p = filedialog.askopenfilename(title="Select avatar image", filetypes=[("Image files","*.png;*.jpg;*.jpeg;*.gif;*.bmp"),("All files","*.*")])
+        if p:
+            self.load_avatar(p)
+
+    def add_customer(self):
+        name = self.name_entry.get().strip()
+        phone = self.phone_entry.get().strip()
+        address = self.address_text.get("1.0", tk.END).strip()
+        if not name:
+            messagebox.showwarning("Validation", "Please enter the customer's name.")
+            return
+        insert_customer(name, phone, address)
+        messagebox.showinfo("Success", "Customer added.")
+        self.clear_form()
+        self.refresh_table()
+
+    def update_customer(self):
+        if not self.selected_customer_id:
+            messagebox.showwarning("No selection", "Select a customer from the table to update.")
+            return
+        name = self.name_entry.get().strip()
+        phone = self.phone_entry.get().strip()
+        address = self.address_text.get("1.0", tk.END).strip()
+        if not name:
+            messagebox.showwarning("Validation", "Please enter the customer's name.")
+            return
+        update_customer_db(self.selected_customer_id, name, phone, address)
+        messagebox.showinfo("Updated", "Customer updated.")
+        self.clear_form()
+        self.refresh_table()
+
+    def delete_customer(self):
+        if not self.selected_customer_id:
+            messagebox.showwarning("No selection", "Select a customer from the table to delete.")
+            return
+        if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete the selected customer?"):
+            delete_customer_db(self.selected_customer_id)
+            messagebox.showinfo("Deleted", "Customer deleted.")
+            self.clear_form()
+            self.refresh_table()
+
+    def clear_form(self):
+        self.selected_customer_id = None
+        self.name_entry.delete(0, tk.END)
+        self.phone_entry.delete(0, tk.END)
+        self.address_text.delete("1.0", tk.END)
+        # also clear selection in tree
+        for sel in self.tree.selection():
+            self.tree.selection_remove(sel)
+
+    def clear_search(self):
+        self.search_var.set('')
+        self.refresh_table()
+
+    def refresh_table(self):
+        for r in self.tree.get_children():
+            self.tree.delete(r)
+        rows = fetch_customers(self.search_var.get().strip() or None)
+        for row in rows:
+            cid, name, phone, address = row
+            display_phone = phone
+            if self.show_binary.get() and phone:
+                display_phone = phone_to_binary(phone)
+            # short address preview for table
+            addr_preview = (address[:80] + '...') if address and len(address) > 80 else address
+            self.tree.insert('', tk.END, values=(cid, name, display_phone, addr_preview))
+
+    def on_tree_double_click(self, event):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        item = self.tree.item(sel[0])
+        cid = item['values'][0]
+        # fetch full record by id from DB
+        conn = sqlite3.connect(DB_FILENAME)
+        cur = conn.cursor()
+        cur.execute("SELECT id, name, phone, address FROM customers WHERE id = ?", (cid,))
+        rec = cur.fetchone()
+        conn.close()
+        if rec:
+            self.selected_customer_id = rec[0]
+            self.name_entry.delete(0, tk.END)
+            self.name_entry.insert(0, rec[1])
+            self.phone_entry.delete(0, tk.END)
+            self.phone_entry.insert(0, rec[2] or '')
+            self.address_text.delete("1.0", tk.END)
+            self.address_text.insert("1.0", rec[3] or '')
+            # ensure the table selection stays visible
+            self.tree.selection_set(self.tree.focus())
+
+    def export_csv(self):
+        import csv
+        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files","*.csv")], title="Export customers to CSV")
+        if not path:
+            return
+        rows = fetch_customers()
+        with open(path, 'w', newline='', encoding='utf-8') as f:
+            w = csv.writer(f)
+            w.writerow(['id','name','phone','address'])
+            for r in rows:
+                w.writerow(r)
+        messagebox.showinfo("Exported", f"Exported {len(rows)} records to {path}")
+
+if __name__ == "__main__":
+    init_db()
+    app = CustomerManager()
+    app.mainloop()
