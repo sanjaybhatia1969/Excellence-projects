@@ -1,0 +1,96 @@
+# ==============================================
+# Product Inventory Management with Automatic Low-Stock Alerts
+# ==============================================
+
+class Product:
+    """Represents a product or service in the catalogue."""
+
+    def __init__(self, product_id, name, category, price, stock_qty=0, description="", duration=None, service_cost=None):
+        self.product_id = product_id
+        self.name = name
+        self.category = category  # 'product' or 'service'
+        self.price = price
+        self.stock_qty = stock_qty  # applicable for products
+        self.description = description
+        self.duration = duration  # applicable for services
+        self.service_cost = service_cost  # applicable for services
+
+    def update_details(self, name=None, price=None, stock_qty=None, description=None, duration=None, service_cost=None):
+        """Update product or service details."""
+        if name is not None:
+            self.name = name
+        if price is not None:
+            self.price = price
+        if stock_qty is not None:
+            self.stock_qty = stock_qty
+            # Automatic low-stock alert
+            if self.is_low_stock():
+                print(f"⚠️ Low stock alert: '{self.name}' has only {self.stock_qty} left!")
+        if description is not None:
+            self.description = description
+        if duration is not None:
+            self.duration = duration
+        if service_cost is not None:
+            self.service_cost = service_cost
+
+    def is_low_stock(self, threshold=5):
+        """Check if stock level is below threshold."""
+        if self.category == 'product' and self.stock_qty <= threshold:
+            return True
+        return False
+
+    def __str__(self):
+        """Display product/service information."""
+        info = f"{self.name} ({self.category}) - Price: ${self.price}"
+        if self.category == 'product':
+            info += f", Stock: {self.stock_qty}, Description: {self.description}"
+        else:  # service
+            info += f", Duration: {self.duration}, Cost: ${self.service_cost}, Description: {self.description}"
+        return info
+
+
+class Inventory:
+    """Manages all products and services."""
+
+    def __init__(self):
+        self.items = []
+
+    def add_item(self, item: Product):
+        """Add a new product or service."""
+        self.items.append(item)
+
+    def update_item(self, product_id, **kwargs):
+        """Update details of an existing item."""
+        for item in self.items:
+            if item.product_id == product_id:
+                item.update_details(**kwargs)
+                break
+
+    def check_low_stock(self):
+        """Generate alerts for low stock items."""
+        low_stock_items = [item for item in self.items if item.is_low_stock()]
+        return low_stock_items
+
+    def display_inventory(self):
+        """Display all items in inventory."""
+        for item in self.items:
+            print(item)
+
+
+# ==============================================
+# Example Usage
+# ==============================================
+
+inventory = Inventory()
+
+# Adding products and services
+inventory.add_item(Product(1, "Coffee", "product", price=5.0, stock_qty=10, description="Arabica Coffee"))
+inventory.add_item(Product(2, "Cappuccino", "product", price=6.0, stock_qty=3, description="With frothy milk"))
+inventory.add_item(Product(3, "Barista Training", "service", price=100, duration="2 hours", service_cost=100, description="Learn to make coffee"))
+
+# Updating an existing product (will trigger low-stock alert automatically if below threshold)
+inventory.update_item(2, stock_qty=2, price=6.5)
+inventory.update_item(1, stock_qty=4)  # This will trigger a low-stock alert
+
+# Display full inventory
+inventory.display_inventory()
