@@ -1,0 +1,281 @@
+"""
+Report Manager
+Generates business reports for management
+Demonstrates: Data aggregation, control structures
+"""
+
+from datetime import datetime, timedelta
+from typing import List, Dict
+from database import DatabaseConnection
+
+class ReportManager:
+    """Manages business reporting"""
+    
+    def __init__(self):
+        self.db = DatabaseConnection()
+    
+    def get_daily_sales_report(self, date: str = None) -> Dict:
+        """
+        Generate daily sales report
+        date format: 'YYYY-MM-DD'
+        """
+        try:
+            if date is None:
+                date = datetime.now().strftime('%Y-%m-%d')
+            
+            # Total sales for the day
+            query = """
+                SELECT COUNT(*) as transaction_count,
+                       SUM(total_amount) as total_sales,
+                       SUM(discount_amount) as total_discounts,
+                       SUM(tax_amount) as total_tax
+                FROM transactions
+                WHERE DATE(transaction_date) = %s AND status = 'Completed'
+            """
+            result = self.db.fetch_one(query, (date,))
+            
+            if result:
+                transaction_count = result[0] or 0
+                total_sales = float(result[1]) if result[1] else 0.0
+                total_discounts = float(result[2]) if result[2] else 0.0
+                total_tax = float(result[3]) if result[3] else 0.0
+            else:
+                transaction_count = 0
+                total_sales = 0.0
+                total_discounts = 0.0
+                total_tax = 0.0
+            
+            # Payment method breakdown
+            payment_query = """
+                SELECT payment_method, COUNT(*) as count, SUM(total_amount) as amount
+                FROM transactions
+                WHERE DATE(transaction_date) = %s AND status = 'Completed'
+                GROUP BY payment_method
+            """
+            payment_results = self.db.fetch_all(payment_query, (date,))
+            
+            payment_breakdown = []
+            for row in payment_results:
+                payment_breakdown.append({
+                    'method': row[0],
+                    'count': row[1],
+                    'amount': float(row[2])
+                })
+            
+            # Top selling products
+            product_query = """
+                SELECT p.name, SUM(ti.quantity) as total_quantity,
+                       SUM(ti.subtotal) as total_revenue
+                FROM transaction_items ti
+                JOIN products p ON ti.product_id = p.product_id
+                JOIN transactions t ON ti.transaction_id = t.transaction_id
+                WHERE DATE(t.transaction_date) = %s AND t.status = 'Completed'
+                GROUP BY p.product_id, p.name
+                ORDER BY total_quantity DESC
+                LIMIT 5
+            """
+            product_results = self.db.fetch_all(product_query, (date,))
+            
+            top_products = []
+            for row in product_results:
+                top_products.append({
+                    'product': row[0],
+                    'quantity': row[1],
+                    'revenue': float(row[2])
+                })
+            
+            return {
+                'date': date,
+                'transaction_count': transaction_count,
+                'total_sales': total_sales,
+                'total_discounts': total_discounts,
+                'total_tax': total_tax,
+                'payment_breakdown': payment_breakdown,
+                'top_products': top_products
+            }
+            
+        except Exception as e:
+            print(f"Error generating daily sales report: {e}")
+            return {
+                'date': date,
+                'transaction_count': 0,
+                'total_sales': 0.0,
+                'error': str(e)
+            }
+    
+    def get_revenue_by_customer_type_report(self, start_date: str = None,
+                                           end_date: str = None) -> List[Dict]:
+        """
+        Generate revenue breakdown by customer type
+        date format: 'YYYY-MM-DD'
+        """
+        try:
+            if start_date is None:
+                start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+            if end_date is None:
+                end_date = datetime.now().strftime('%Y-%m-%d')
+            
+            query = """
+                SELECT 
+                    COALESCE(c.customer_type, 'Walk-in') as customer_type,
+                    COUNT(t.transaction_id) as transaction_count,
+                    SUM(t.total_amount) as total_revenue,
+                    AVG(t.total_amount) as average_transaction,
+                    SUM(t.discount_amount) as total_discounts
+                FROM transactions t
+                LEFT JOIN customers c ON t.customer_id = c.customer_id
+                WHERE DATE(t.transaction_date) BETWEEN %s AND %s
+                    AND t.status = 'Completed'
+                GROUP BY customer_type
+                ORDER BY total_revenue DESC
+            """
+            results = self.db.fetch_all(query, (start_date, end_date))
+            
+            report = []
+            for row in results:
+                report.append({
+                    'customer_type': row[0],
+                    'transaction_count': row[1],
+                    'total_revenue': float(row[2]),
+                    'average_transaction': float(row[3]),
+                    'total_discounts': float(row[4])
+                })
+            
+            return report
+            
+        except Exception as e:
+            print(f"Error generating customer type report: {e}")
+            return []
+    
+    def get_inventory_status_report(self) -> Dict:
+        """Generate inventory status report"""
+        try:
+            # Low stock products
+            low_stock_query = """
+                SELECT product_id, name, stock_quantity, low_stock_threshold,
+                       price, category
+                FROM products
+                WHERE stock_quantity <= low_stock_threshold
+                ORDER BY stock_quantity ASC
+            """
+            low_stock_results = self.db.fetch_all(low_stock_query)
+            
+            low_stock = []
+            for row in low_stock_results:
+                low_stock.append({
+                    'product_id': row[0],
+                    'name': row[1],
+                    'current_stock': row[2],
+                    'threshold': row[3],
+                    'price': float(row[4]),
+                    'category': row[5]
+                })
+            
+            # Total inventory value
+            value_query = """
+                SELECT SUM(price * stock_quantity) as total_value,
+                       COUNT(*) as total_products
+                FROM products
+            """
+            value_result = self.db.fetch_one(value_query)
+            
+            total_value = float(value_result[0]) if value_result[0] else 0.0
+            total_products = value_result[1] if value_result else 0
+            
+            # Stock by category
+            category_query = """
+                SELECT category, COUNT(*) as product_count,
+                       SUM(stock_quantity) as total_quantity,
+                       SUM(price * stock_quantity) as category_value
+                FROM products
+                WHERE category IS NOT NULL AND category != ''
+                GROUP BY category
+                ORDER BY category_value DESC
+            """
+            category_results = self.db.fetch_all(category_query)
+            
+            by_category = []
+            for row in category_results:
+                by_category.append({
+                    'category': row[0],
+                    'product_count': row[1],
+                    'total_quantity': row[2],
+                    'value': float(row[3])
+                })
+            
+            return {
+                'low_stock_products': low_stock,
+                'low_stock_count': len(low_stock),
+                'total_inventory_value': total_value,
+                'total_products': total_products,
+                'by_category': by_category
+            }
+            
+        except Exception as e:
+            print(f"Error generating inventory report: {e}")
+            return {
+                'low_stock_products': [],
+                'error': str(e)
+            }
+    
+    def get_sales_trend_report(self, days: int = 7) -> List[Dict]:
+        """Generate sales trend for the last N days"""
+        try:
+            query = """
+                SELECT DATE(transaction_date) as sale_date,
+                       COUNT(*) as transaction_count,
+                       SUM(total_amount) as daily_total
+                FROM transactions
+                WHERE transaction_date >= DATE_SUB(CURDATE(), INTERVAL %s DAY)
+                    AND status = 'Completed'
+                GROUP BY DATE(transaction_date)
+                ORDER BY sale_date ASC
+            """
+            results = self.db.fetch_all(query, (days,))
+            
+            trend = []
+            for row in results:
+                trend.append({
+                    'date': row[0].strftime('%Y-%m-%d'),
+                    'transactions': row[1],
+                    'total_sales': float(row[2])
+                })
+            
+            return trend
+            
+        except Exception as e:
+            print(f"Error generating sales trend: {e}")
+            return []
+    
+    def get_top_customers_report(self, limit: int = 10) -> List[Dict]:
+        """Get top customers by total spending"""
+        try:
+            query = """
+                SELECT c.customer_id, c.name, c.customer_type, c.loyalty_points,
+                       COUNT(t.transaction_id) as visit_count,
+                       SUM(t.total_amount) as total_spent
+                FROM customers c
+                JOIN transactions t ON c.customer_id = t.customer_id
+                WHERE t.status = 'Completed'
+                GROUP BY c.customer_id
+                ORDER BY total_spent DESC
+                LIMIT %s
+            """
+            results = self.db.fetch_all(query, (limit,))
+            
+            customers = []
+            for row in results:
+                customers.append({
+                    'customer_id': row[0],
+                    'name': row[1],
+                    'type': row[2],
+                    'loyalty_points': row[3],
+                    'visit_count': row[4],
+                    'total_spent': float(row[5])
+                })
+            
+            return customers
+            
+        except Exception as e:
+            print(f"Error generating top customers report: {e}")
+            return []
