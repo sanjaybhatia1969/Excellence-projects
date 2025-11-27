@@ -13,6 +13,7 @@ from customer_manager import CustomerManager
 from product_manager import ProductManager
 from transaction_manager import TransactionManager
 from report_manager import ReportManager
+from staff_manager import StaffManager
 from models import Transaction
 
 
@@ -34,6 +35,7 @@ class CafeRetailGUI:
         self.product_manager = ProductManager()
         self.transaction_manager = TransactionManager()
         self.report_manager = ReportManager()
+        self.staff_manager = StaffManager()
 
         # Styles
         self.style = ttk.Style()
@@ -80,7 +82,7 @@ class CafeRetailGUI:
 
         # Hint
         tk.Label(login_frame,
-                 text="Admin: admin / admin123\nStaff: staff / staff123",
+                 text="Copyright © 2025 Execellence Corp. Powered by Sanjay Bhatia.",
                  bg="white", fg="#7f8c8d").pack()
         
         # Bind Enter key
@@ -124,13 +126,20 @@ class CafeRetailGUI:
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
 
+        # Base menu buttons for all users
         menu_buttons = [
             ("🛒 New Sale", self.show_sales_screen),
             ("👥 Customers", self.show_customers_screen),
             ("📦 Products", self.show_products_screen),
             ("📊 Reports", self.show_reports_screen),
-            ("🚪 Logout", self.handle_logout),
         ]
+        
+        # Add Staff Management for admin only
+        if self.auth_manager.is_admin():
+            menu_buttons.append(("👤 Staff", self.show_staff_screen))
+        
+        # Add Logout at the end
+        menu_buttons.append(("🚪 Logout", self.handle_logout))
 
         for text, cmd in menu_buttons:
             btn = tk.Button(sidebar, text=text, bg="#34495e", fg="white",
@@ -156,7 +165,7 @@ class CafeRetailGUI:
             self.show_login_screen()
 
     # ============================================================
-    # SALES / POS SCREEN
+    # SALES / POS SCREEN (SCROLLABLE)
     # ============================================================
     def show_sales_screen(self):
         # Clear
@@ -191,23 +200,74 @@ class CafeRetailGUI:
                    command=lambda: self.load_products(products_tree,
                                                       search_entry.get())).pack(side="left")
 
-        # Product Tree
-        products_tree = ttk.Treeview(left,
+        # Product Tree with scrollbar
+        product_tree_frame = tk.Frame(left, bg="white")
+        product_tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        product_scroll = ttk.Scrollbar(product_tree_frame, orient="vertical")
+        product_scroll.pack(side="right", fill="y")
+        
+        products_tree = ttk.Treeview(product_tree_frame,
                                      columns=("ID", "Name", "Price", "Stock"),
-                                     show="headings", height=15)
+                                     show="headings", height=15,
+                                     yscrollcommand=product_scroll.set)
+        product_scroll.config(command=products_tree.yview)
+        
         for col in ("ID", "Name", "Price", "Stock"):
             products_tree.heading(col, text=col)
             products_tree.column(col, width=100)
-        products_tree.pack(fill="both", expand=True, padx=10, pady=10)
+        products_tree.pack(fill="both", expand=True)
 
         ttk.Button(left, text="Add to Cart",
                    command=lambda: self.add_to_cart(products_tree, cart_tree)).pack(pady=10)
 
-        # -------- RIGHT (CART)
-        right = tk.Frame(main, bg="white", bd=1, relief="solid", width=400)
-        right.pack(side="right", fill="y")
-        right.pack_propagate(False)
+        # -------- RIGHT (CART) - WITH SCROLL
+        right_container = tk.Frame(main, bg="white", bd=1, relief="solid", width=420)
+        right_container.pack(side="right", fill="both")
+        right_container.pack_propagate(False)
 
+        # Create canvas for scrolling
+        cart_canvas = tk.Canvas(right_container, bg="white", highlightthickness=0)
+        cart_scrollbar = ttk.Scrollbar(right_container, orient="vertical", command=cart_canvas.yview)
+        
+        # Scrollable frame inside canvas
+        right = tk.Frame(cart_canvas, bg="white")
+        
+        # Configure canvas
+        cart_canvas.configure(yscrollcommand=cart_scrollbar.set)
+        
+        # Pack scrollbar and canvas
+        cart_scrollbar.pack(side="right", fill="y")
+        cart_canvas.pack(side="left", fill="both", expand=True)
+        
+        # Create window in canvas
+        canvas_frame = cart_canvas.create_window((0, 0), window=right, anchor="nw")
+        
+        # Configure scroll region when frame size changes
+        def configure_scroll_region(event):
+            cart_canvas.configure(scrollregion=cart_canvas.bbox("all"))
+        
+        def configure_canvas_width(event):
+            cart_canvas.itemconfig(canvas_frame, width=event.width)
+        
+        right.bind("<Configure>", configure_scroll_region)
+        cart_canvas.bind("<Configure>", configure_canvas_width)
+        
+        # Enable mouse wheel scrolling - only when mouse is over cart area
+        def on_mousewheel(event):
+            cart_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        def bind_mousewheel(event):
+            cart_canvas.bind_all("<MouseWheel>", on_mousewheel)
+        
+        def unbind_mousewheel(event):
+            cart_canvas.unbind_all("<MouseWheel>")
+        
+        # Only scroll when mouse is over the cart area
+        right_container.bind("<Enter>", bind_mousewheel)
+        right_container.bind("<Leave>", unbind_mousewheel)
+
+        # Cart Header
         tk.Label(right, text="Shopping Cart", font=("Arial", 12, "bold"), bg="white").pack(pady=10)
 
         # Customer selection
@@ -222,51 +282,79 @@ class CafeRetailGUI:
         ttk.Button(cust_frame, text="Load",
                    command=lambda: self.load_customers_combo(customer_combo)).pack(side="left")
 
-        # Cart Tree
-        cart_tree = ttk.Treeview(right,
+        # Cart Tree with scrollbar
+        cart_tree_frame = tk.Frame(right, bg="white")
+        cart_tree_frame.pack(fill="x", padx=10, pady=10)
+        
+        cart_tree_scroll = ttk.Scrollbar(cart_tree_frame, orient="vertical")
+        cart_tree_scroll.pack(side="right", fill="y")
+        
+        cart_tree = ttk.Treeview(cart_tree_frame,
                                  columns=("Product", "Qty", "Price", "Total"),
-                                 show="headings", height=10)
+                                 show="headings", height=8,
+                                 yscrollcommand=cart_tree_scroll.set)
+        cart_tree_scroll.config(command=cart_tree.yview)
+        
         for col in ("Product", "Qty", "Price", "Total"):
             cart_tree.heading(col, text=col)
-            cart_tree.column(col, width=90)
-        cart_tree.pack(fill="both", expand=True, padx=10, pady=10)
+            cart_tree.column(col, width=85)
+        cart_tree.pack(fill="x")
 
         ttk.Button(right, text="Remove Item",
                    command=lambda: self.remove_from_cart(cart_tree)).pack(pady=5)
 
+        # Separator
+        ttk.Separator(right, orient="horizontal").pack(fill="x", padx=10, pady=5)
+
         # Totals
         totals = tk.Frame(right, bg="white")
-        totals.pack(fill="x", padx=10, pady=10)
+        totals.pack(fill="x", padx=10, pady=5)
 
-        self.subtotal_label = tk.Label(totals, text="Subtotal: $0.00", bg="white")
-        self.discount_label = tk.Label(totals, text="Discount: $0.00", bg="white")
-        self.tax_label = tk.Label(totals, text="Tax: $0.00", bg="white")
-        self.total_label = tk.Label(totals, text="TOTAL: $0.00", font=("Arial", 14, "bold"), bg="white")
+        self.subtotal_label = tk.Label(totals, text="Subtotal: $0.00", bg="white", font=("Arial", 10))
+        self.discount_label = tk.Label(totals, text="Discount: $0.00", bg="white", font=("Arial", 10))
+        self.tax_label = tk.Label(totals, text="Tax: $0.00", bg="white", font=("Arial", 10))
+        self.total_label = tk.Label(totals, text="TOTAL: $0.00", font=("Arial", 14, "bold"), bg="white", fg="#27ae60")
 
         self.subtotal_label.pack(anchor="w")
         self.discount_label.pack(anchor="w")
         self.tax_label.pack(anchor="w")
         self.total_label.pack(anchor="w", pady=5)
 
-        # Payment
-        pay = tk.Frame(right, bg="white")
-        pay.pack(fill="x", padx=10)
+        # Separator
+        ttk.Separator(right, orient="horizontal").pack(fill="x", padx=10, pady=5)
 
-        tk.Label(pay, text="Payment:", bg="white").pack(side="left")
+        # Payment Section
+        pay_label = tk.Label(right, text="Payment Options", font=("Arial", 11, "bold"), bg="white")
+        pay_label.pack(anchor="w", padx=10, pady=(5, 10))
 
+        # Payment Method
+        pay_method_frame = tk.Frame(right, bg="white")
+        pay_method_frame.pack(fill="x", padx=10, pady=5)
+        
+        tk.Label(pay_method_frame, text="Method:", bg="white", width=10, anchor="w").pack(side="left")
         self.payment_var = tk.StringVar(value="Cash")
-        ttk.Combobox(pay, textvariable=self.payment_var,
-                     values=["Cash", "Credit", "Debit"],
-                     width=10).pack(side="left")
+        payment_combo = ttk.Combobox(pay_method_frame, textvariable=self.payment_var,
+                     values=["Cash", "Credit", "Debit"], width=15, state="readonly")
+        payment_combo.pack(side="left")
 
-        tk.Label(pay, text="Cash:", bg="white").pack(side="left", padx=10)
-        self.cash_entry = ttk.Entry(pay, width=10)
+        # Cash Received
+        cash_frame = tk.Frame(right, bg="white")
+        cash_frame.pack(fill="x", padx=10, pady=5)
+        
+        tk.Label(cash_frame, text="Cash Received:", bg="white", width=12, anchor="w").pack(side="left")
+        self.cash_entry = ttk.Entry(cash_frame, width=15)
         self.cash_entry.pack(side="left")
+        tk.Label(cash_frame, text="$", bg="white").pack(side="left", padx=(0, 5))
 
-        tk.Button(right, text="PROCESS SALE", bg="#27ae60", fg="white",
-                  font=("Arial", 12, "bold"),
-                  command=lambda: self.process_sale(cart_tree)).pack(fill="x",
-                                                                     padx=10, pady=10)
+        # Process Sale Button
+        tk.Button(right, text="💳 PROCESS SALE", bg="#27ae60", fg="white",
+                  font=("Arial", 12, "bold"), height=2,
+                  command=lambda: self.process_sale(cart_tree)).pack(fill="x", padx=10, pady=15)
+
+        # Clear Cart Button
+        tk.Button(right, text="🗑️ Clear Cart", bg="#e74c3c", fg="white",
+                  font=("Arial", 10),
+                  command=lambda: self.clear_cart(cart_tree)).pack(fill="x", padx=10, pady=(0, 15))
 
         self.cart_tree = cart_tree
         self.load_products(products_tree)
@@ -1011,6 +1099,411 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         text_area.config(state="disabled")
 
     # ============================================================
+    # STAFF MANAGEMENT SCREEN (ADMIN ONLY)
+    # ============================================================
+    def show_staff_screen(self):
+        """Display staff management screen - Admin only"""
+        # Check if user is admin
+        if not self.auth_manager.is_admin():
+            messagebox.showerror("Access Denied", "Only administrators can access staff management.")
+            return
+        
+        for w in self.content_frame.winfo_children():
+            w.destroy()
+
+        # Header
+        header = tk.Frame(self.content_frame, bg="#8e44ad", height=50)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Label(header, text="👤 Staff Management",
+                 fg="white", bg="#8e44ad",
+                 font=("Arial", 16, "bold")).pack(side="left", padx=20, pady=10)
+
+        # Main container
+        main = tk.Frame(self.content_frame, bg="#ecf0f1")
+        main.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Controls
+        controls = tk.Frame(main, bg="#ecf0f1")
+        controls.pack(fill="x", pady=(0, 10))
+
+        tk.Label(controls, text="Search:", bg="#ecf0f1").pack(side="left")
+        search_entry = ttk.Entry(controls, width=25)
+        search_entry.pack(side="left", padx=5)
+
+        ttk.Button(controls, text="🔍 Search",
+                   command=lambda: self.load_staff_list(tree, search_entry.get())).pack(side="left")
+
+        ttk.Button(controls, text="➕ Add Staff",
+                   command=lambda: self.show_add_staff_dialog(tree)).pack(side="left", padx=20)
+
+        ttk.Button(controls, text="✏️ Edit",
+                   command=lambda: self.show_edit_staff_dialog(tree)).pack(side="left")
+
+        ttk.Button(controls, text="🔑 Reset Password",
+                   command=lambda: self.show_reset_password_dialog(tree)).pack(side="left", padx=5)
+
+        ttk.Button(controls, text="🗑️ Delete",
+                   command=lambda: self.delete_staff(tree)).pack(side="left", padx=5)
+
+        ttk.Button(controls, text="🔄 Refresh",
+                   command=lambda: self.load_staff_list(tree)).pack(side="left", padx=5)
+
+        # Staff list
+        tree_frame = tk.Frame(main, bg="white", bd=1, relief="solid")
+        tree_frame.pack(fill="both", expand=True)
+
+        columns = ("ID", "Username", "Name", "Role", "Email", "Phone", "Created")
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings")
+
+        tree.heading("ID", text="ID")
+        tree.heading("Username", text="Username")
+        tree.heading("Name", text="Name")
+        tree.heading("Role", text="Role")
+        tree.heading("Email", text="Email")
+        tree.heading("Phone", text="Phone")
+        tree.heading("Created", text="Created")
+
+        tree.column("ID", width=50)
+        tree.column("Username", width=120)
+        tree.column("Name", width=150)
+        tree.column("Role", width=80)
+        tree.column("Email", width=180)
+        tree.column("Phone", width=120)
+        tree.column("Created", width=100)
+
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        tree.pack(fill="both", expand=True)
+
+        self.load_staff_list(tree)
+
+    def load_staff_list(self, tree, search_term=""):
+        """Load staff list into treeview"""
+        for i in tree.get_children():
+            tree.delete(i)
+
+        staff_list = self.staff_manager.get_all_staff(search_term)
+        for s in staff_list:
+            role_display = "👑 Admin" if s['role'] == 'admin' else "👤 Staff"
+            tree.insert("", "end", values=(
+                s['user_id'],
+                s['username'],
+                s['name'],
+                role_display,
+                s['email'],
+                s['phone'],
+                s['created_at']
+            ))
+
+    def show_add_staff_dialog(self, tree):
+        """Show dialog to add new staff"""
+        win = tk.Toplevel(self.root)
+        win.title("Add New Staff")
+        win.geometry("450x550")
+        win.grab_set()
+        win.resizable(False, False)
+
+        frm = tk.Frame(win, bg="white", padx=30, pady=20)
+        frm.pack(fill="both", expand=True)
+
+        tk.Label(frm, text="Add New Staff Member", font=("Arial", 14, "bold"), 
+                 bg="white").pack(pady=(0, 20))
+
+        entries = {}
+
+        # Username
+        tk.Label(frm, text="Username: *", bg="white", anchor="w").pack(fill="x", pady=(10, 0))
+        entries["username"] = ttk.Entry(frm, width=40)
+        entries["username"].pack(fill="x")
+
+        # Password
+        tk.Label(frm, text="Password: *", bg="white", anchor="w").pack(fill="x", pady=(10, 0))
+        entries["password"] = ttk.Entry(frm, width=40, show="*")
+        entries["password"].pack(fill="x")
+
+        # Confirm Password
+        tk.Label(frm, text="Confirm Password: *", bg="white", anchor="w").pack(fill="x", pady=(10, 0))
+        entries["confirm_password"] = ttk.Entry(frm, width=40, show="*")
+        entries["confirm_password"].pack(fill="x")
+
+        # Name
+        tk.Label(frm, text="Full Name: *", bg="white", anchor="w").pack(fill="x", pady=(10, 0))
+        entries["name"] = ttk.Entry(frm, width=40)
+        entries["name"].pack(fill="x")
+
+        # Email
+        tk.Label(frm, text="Email:", bg="white", anchor="w").pack(fill="x", pady=(10, 0))
+        entries["email"] = ttk.Entry(frm, width=40)
+        entries["email"].pack(fill="x")
+
+        # Phone
+        tk.Label(frm, text="Phone:", bg="white", anchor="w").pack(fill="x", pady=(10, 0))
+        entries["phone"] = ttk.Entry(frm, width=40)
+        entries["phone"].pack(fill="x")
+
+        # Address
+        tk.Label(frm, text="Address:", bg="white", anchor="w").pack(fill="x", pady=(10, 0))
+        entries["address"] = ttk.Entry(frm, width=40)
+        entries["address"].pack(fill="x")
+
+        # Role
+        tk.Label(frm, text="Role: *", bg="white", anchor="w").pack(fill="x", pady=(10, 0))
+        role_var = tk.StringVar(value="staff")
+        role_frame = tk.Frame(frm, bg="white")
+        role_frame.pack(fill="x")
+        ttk.Radiobutton(role_frame, text="Staff", variable=role_var, value="staff").pack(side="left")
+        ttk.Radiobutton(role_frame, text="Admin", variable=role_var, value="admin").pack(side="left", padx=20)
+
+        tk.Label(frm, text="* Required fields", bg="white", fg="#7f8c8d", 
+                 font=("Arial", 9)).pack(pady=(15, 0))
+
+        def save():
+            username = entries["username"].get().strip()
+            password = entries["password"].get()
+            confirm = entries["confirm_password"].get()
+            name = entries["name"].get().strip()
+            
+            # Validation
+            if not username:
+                messagebox.showerror("Error", "Username is required")
+                return
+            
+            if not password:
+                messagebox.showerror("Error", "Password is required")
+                return
+            
+            if password != confirm:
+                messagebox.showerror("Error", "Passwords do not match")
+                return
+            
+            if len(password) < 4:
+                messagebox.showerror("Error", "Password must be at least 4 characters")
+                return
+            
+            if not name:
+                messagebox.showerror("Error", "Name is required")
+                return
+            
+            success, msg = self.staff_manager.add_staff(
+                username=username,
+                password=password,
+                name=name,
+                email=entries["email"].get().strip(),
+                phone=entries["phone"].get().strip(),
+                address=entries["address"].get().strip(),
+                role=role_var.get()
+            )
+            
+            if success:
+                messagebox.showinfo("Success", msg)
+                self.load_staff_list(tree)
+                win.destroy()
+            else:
+                messagebox.showerror("Error", msg)
+
+        btn_frame = tk.Frame(frm, bg="white")
+        btn_frame.pack(pady=20)
+        
+        tk.Button(btn_frame, text="Save", bg="#27ae60", fg="white",
+                  font=("Arial", 11), width=12, command=save).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Cancel", bg="#95a5a6", fg="white",
+                  font=("Arial", 11), width=12, command=win.destroy).pack(side="left", padx=5)
+
+    def show_edit_staff_dialog(self, tree):
+        """Show dialog to edit staff"""
+        selection = tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a staff member to edit")
+            return
+
+        item = tree.item(selection[0])
+        user_id = item["values"][0]
+        staff = self.staff_manager.get_staff(user_id)
+
+        if not staff:
+            messagebox.showerror("Error", "Staff not found")
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("Edit Staff")
+        win.geometry("450x450")
+        win.grab_set()
+        win.resizable(False, False)
+
+        frm = tk.Frame(win, bg="white", padx=30, pady=20)
+        frm.pack(fill="both", expand=True)
+
+        tk.Label(frm, text="Edit Staff Member", font=("Arial", 14, "bold"), 
+                 bg="white").pack(pady=(0, 20))
+        
+        tk.Label(frm, text=f"Username: {staff['username']}", bg="white", 
+                 font=("Arial", 10, "italic")).pack(anchor="w")
+
+        entries = {}
+
+        # Name
+        tk.Label(frm, text="Full Name: *", bg="white", anchor="w").pack(fill="x", pady=(15, 0))
+        entries["name"] = ttk.Entry(frm, width=40)
+        entries["name"].insert(0, staff['name'])
+        entries["name"].pack(fill="x")
+
+        # Email
+        tk.Label(frm, text="Email:", bg="white", anchor="w").pack(fill="x", pady=(10, 0))
+        entries["email"] = ttk.Entry(frm, width=40)
+        entries["email"].insert(0, staff['email'])
+        entries["email"].pack(fill="x")
+
+        # Phone
+        tk.Label(frm, text="Phone:", bg="white", anchor="w").pack(fill="x", pady=(10, 0))
+        entries["phone"] = ttk.Entry(frm, width=40)
+        entries["phone"].insert(0, staff['phone'])
+        entries["phone"].pack(fill="x")
+
+        # Role
+        tk.Label(frm, text="Role:", bg="white", anchor="w").pack(fill="x", pady=(10, 0))
+        role_var = tk.StringVar(value=staff['role'])
+        role_frame = tk.Frame(frm, bg="white")
+        role_frame.pack(fill="x")
+        ttk.Radiobutton(role_frame, text="Staff", variable=role_var, value="staff").pack(side="left")
+        ttk.Radiobutton(role_frame, text="Admin", variable=role_var, value="admin").pack(side="left", padx=20)
+
+        # Transaction count info
+        trans_count = self.staff_manager.get_staff_transaction_count(user_id)
+        tk.Label(frm, text=f"Transactions processed: {trans_count}", 
+                 bg="white", fg="#7f8c8d").pack(pady=(20, 0))
+
+        def update():
+            name = entries["name"].get().strip()
+            
+            if not name:
+                messagebox.showerror("Error", "Name is required")
+                return
+            
+            success, msg = self.staff_manager.update_staff(
+                user_id=user_id,
+                name=name,
+                email=entries["email"].get().strip(),
+                phone=entries["phone"].get().strip(),
+                role=role_var.get()
+            )
+            
+            if success:
+                messagebox.showinfo("Success", msg)
+                self.load_staff_list(tree)
+                win.destroy()
+            else:
+                messagebox.showerror("Error", msg)
+
+        btn_frame = tk.Frame(frm, bg="white")
+        btn_frame.pack(pady=25)
+        
+        tk.Button(btn_frame, text="Update", bg="#3498db", fg="white",
+                  font=("Arial", 11), width=12, command=update).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Cancel", bg="#95a5a6", fg="white",
+                  font=("Arial", 11), width=12, command=win.destroy).pack(side="left", padx=5)
+
+    def show_reset_password_dialog(self, tree):
+        """Show dialog to reset staff password"""
+        selection = tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a staff member")
+            return
+
+        item = tree.item(selection[0])
+        user_id = item["values"][0]
+        username = item["values"][1]
+        name = item["values"][2]
+
+        win = tk.Toplevel(self.root)
+        win.title("Reset Password")
+        win.geometry("400x280")
+        win.grab_set()
+        win.resizable(False, False)
+
+        frm = tk.Frame(win, bg="white", padx=30, pady=20)
+        frm.pack(fill="both", expand=True)
+
+        tk.Label(frm, text="Reset Password", font=("Arial", 14, "bold"), 
+                 bg="white").pack(pady=(0, 10))
+        
+        tk.Label(frm, text=f"Staff: {name} ({username})", bg="white").pack(pady=(0, 20))
+
+        # New Password
+        tk.Label(frm, text="New Password:", bg="white", anchor="w").pack(fill="x")
+        new_password = ttk.Entry(frm, width=35, show="*")
+        new_password.pack(fill="x", pady=(0, 10))
+
+        # Confirm Password
+        tk.Label(frm, text="Confirm Password:", bg="white", anchor="w").pack(fill="x")
+        confirm_password = ttk.Entry(frm, width=35, show="*")
+        confirm_password.pack(fill="x")
+
+        def reset():
+            new_pwd = new_password.get()
+            confirm_pwd = confirm_password.get()
+            
+            if not new_pwd:
+                messagebox.showerror("Error", "Password is required")
+                return
+            
+            if new_pwd != confirm_pwd:
+                messagebox.showerror("Error", "Passwords do not match")
+                return
+            
+            if len(new_pwd) < 4:
+                messagebox.showerror("Error", "Password must be at least 4 characters")
+                return
+            
+            success, msg = self.staff_manager.update_password(user_id, new_pwd)
+            
+            if success:
+                messagebox.showinfo("Success", msg)
+                win.destroy()
+            else:
+                messagebox.showerror("Error", msg)
+
+        btn_frame = tk.Frame(frm, bg="white")
+        btn_frame.pack(pady=25)
+        
+        tk.Button(btn_frame, text="Reset Password", bg="#e74c3c", fg="white",
+                  font=("Arial", 11), width=14, command=reset).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Cancel", bg="#95a5a6", fg="white",
+                  font=("Arial", 11), width=10, command=win.destroy).pack(side="left", padx=5)
+
+    def delete_staff(self, tree):
+        """Delete selected staff member"""
+        selection = tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a staff member to delete")
+            return
+
+        item = tree.item(selection[0])
+        user_id = item["values"][0]
+        username = item["values"][1]
+        name = item["values"][2]
+        
+        # Prevent self-deletion
+        if user_id == self.auth_manager.current_user.user_id:
+            messagebox.showerror("Error", "You cannot delete your own account!")
+            return
+
+        if messagebox.askyesno("Confirm Delete", 
+                               f"Are you sure you want to delete staff member:\n\n"
+                               f"Name: {name}\n"
+                               f"Username: {username}\n\n"
+                               f"This action cannot be undone!"):
+            success, msg = self.staff_manager.delete_staff(user_id)
+            
+            if success:
+                messagebox.showinfo("Success", msg)
+                self.load_staff_list(tree)
+            else:
+                messagebox.showerror("Error", msg)
+
+    # ============================================================
     # SUPPORT FUNCTIONS (from POS)
     # ============================================================
     def load_products(self, tree, term=""):
@@ -1038,33 +1531,66 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
         item = products_tree.item(selected[0])
         product_id = int(item["values"][0])
+        product_name = item["values"][1]
 
         # Ask quantity
         win = tk.Toplevel(self.root)
-        win.title("Quantity")
-        win.geometry("300x150")
+        win.title("Add to Cart")
+        win.geometry("300x180")
         win.grab_set()
+        win.resizable(False, False)
+        
+        # Center the window
+        win.transient(self.root)
+        
+        frame = tk.Frame(win, padx=20, pady=20)
+        frame.pack(fill="both", expand=True)
 
-        tk.Label(win, text="Enter quantity:").pack(pady=20)
-        qty_entry = ttk.Entry(win, width=10)
-        qty_entry.pack()
+        tk.Label(frame, text=f"Product: {product_name}", font=("Arial", 10, "bold")).pack(pady=(0, 10))
+        tk.Label(frame, text="Enter quantity:").pack()
+        
+        qty_entry = ttk.Entry(frame, width=15, justify="center")
+        qty_entry.pack(pady=10)
         qty_entry.insert(0, "1")
-        qty_entry.focus()
+        qty_entry.select_range(0, tk.END)
+        qty_entry.focus_set()
 
         def add():
+            qty_text = qty_entry.get().strip()
+            if not qty_text:
+                messagebox.showerror("Error", "Please enter a quantity")
+                return
+            
             try:
-                q = int(qty_entry.get())
+                q = int(qty_text)
+                if q <= 0:
+                    messagebox.showerror("Error", "Quantity must be greater than 0")
+                    return
+                    
                 success, msg = self.transaction_manager.add_item_to_cart(product_id, q)
+                
+                # Close window first regardless of outcome
+                win.destroy()
+                
                 if success:
                     self.update_cart_display(cart_tree)
-                    win.destroy()
                 else:
                     messagebox.showerror("Error", msg)
-            except:
-                messagebox.showerror("Error", "Invalid number")
+                    
+            except ValueError:
+                messagebox.showerror("Error", "Please enter a valid number")
+            except Exception as e:
+                win.destroy()
+                messagebox.showerror("Error", f"An error occurred: {str(e)}")
 
-        ttk.Button(win, text="Add", command=add).pack(pady=10)
+        btn_frame = tk.Frame(frame)
+        btn_frame.pack(pady=10)
+        
+        ttk.Button(btn_frame, text="Add", command=add, width=10).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=win.destroy, width=10).pack(side="left", padx=5)
+        
         qty_entry.bind('<Return>', lambda e: add())
+        qty_entry.bind('<Escape>', lambda e: win.destroy())
 
     def remove_from_cart(self, cart_tree):
         selected = cart_tree.selection()
@@ -1081,6 +1607,14 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
                 break
 
         self.update_cart_display(cart_tree)
+
+    def clear_cart(self, cart_tree):
+        """Clear all items from cart"""
+        trans = self.transaction_manager.current_transaction
+        if trans and len(trans.items) > 0:
+            if messagebox.askyesno("Clear Cart", "Are you sure you want to clear all items from the cart?"):
+                trans.clear_items()
+                self.update_cart_display(cart_tree)
 
     def update_cart_display(self, cart_tree):
         for i in cart_tree.get_children():
@@ -1133,7 +1667,7 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         if success:
             self.show_receipt(tid)
             self.transaction_manager.start_new_transaction(
-                self.auth_manager.current_user, "Cash"
+                self.auth_manager.current_user, payment_method="Cash"
             )
             self.update_cart_display(cart_tree)
             self.cash_entry.delete(0, "end")
