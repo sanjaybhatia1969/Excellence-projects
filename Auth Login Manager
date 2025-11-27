@@ -1,0 +1,85 @@
+"""
+Authentication Manager
+Handles user login, logout, and session management
+"""
+
+from typing import Optional
+from models import User
+from database import DatabaseConnection
+
+class AuthenticationManager:
+    """Manages user authentication and sessions"""
+    
+    def __init__(self):
+        self.db = DatabaseConnection()
+        self._current_user: Optional[User] = None
+    
+    @property
+    def current_user(self) -> Optional[User]:
+        """Get currently logged in user"""
+        return self._current_user
+    
+    def login(self, username: str, password: str) -> tuple[bool, str]:
+        """
+        Authenticate user
+        Returns: (success: bool, message: str)
+        """
+        try:
+            # Check database connection
+            if not self.db.get_connection():
+                return False, "Database connection failed. Please check MySQL server."
+            
+            # Query user from database
+            query = """
+                SELECT user_id, username, password, role, name, email, phone
+                FROM users
+                WHERE username = %s
+            """
+            result = self.db.fetch_one(query, (username,))
+            
+            if not result:
+                return False, "Invalid username or password"
+            
+            user_id, db_username, db_password, role, name, email, phone = result
+            
+            # Verify password (in production, use hashed passwords)
+            if password != db_password:
+                return False, "Invalid username or password"
+            
+            # Create user object
+            self._current_user = User(
+                user_id=user_id,
+                username=db_username,
+                password=db_password,
+                role=role,
+                name=name,
+                email=email or "",
+                phone=phone or ""
+            )
+            
+            return True, f"Welcome, {name}!"
+            
+        except Exception as e:
+            print(f"Login exception: {e}")
+            return False, f"Login error: {str(e)}"
+    
+    def logout(self):
+        """Log out current user"""
+        self._current_user = None
+    
+    def is_logged_in(self) -> bool:
+        """Check if user is logged in"""
+        return self._current_user is not None
+    
+    def is_admin(self) -> bool:
+        """Check if current user is admin"""
+        return self._current_user is not None and self._current_user.is_admin()
+    
+    def get_username(self) -> str:
+        """Get current username"""
+        return self._current_user.username if self._current_user else "Guest"
+    
+    def get_user_display_name(self) -> str:
+        """Get current user's display name"""
+        return self._current_user.name if self._current_user else "Guest"
+
