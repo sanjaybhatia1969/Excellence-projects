@@ -559,7 +559,7 @@ class LoginScreen(ttk.Frame):
 
         ttk.Label(
             container,
-            text="Staff Login",
+            text=" ",
             font=("Segoe UI", 14, "bold")
         ).pack(pady=5)
 
@@ -567,20 +567,20 @@ class LoginScreen(ttk.Frame):
         username_row = ttk.Frame(container)
         username_row.pack(fill="x", pady=5)
 
-        ttk.Label(username_row, text="Username:", width=12, anchor="e")\
+        ttk.Label(username_row, text="Username:", width=17, anchor="e")\
             .grid(row=0, column=0, padx=5)
 
-        self.username_entry = ttk.Entry(username_row, width=25)
+        self.username_entry = ttk.Entry(username_row, width=29)
         self.username_entry.grid(row=0, column=1, padx=5)
 
         # Password row
         password_row = ttk.Frame(container)
         password_row.pack(fill="x", pady=5)
 
-        ttk.Label(password_row, text="Password:", width=12, anchor="e")\
+        ttk.Label(password_row, text="Password:", width=17, anchor="e")\
             .grid(row=0, column=0, padx=5)
 
-        self.password_entry = ttk.Entry(password_row, width=25, show="*")
+        self.password_entry = ttk.Entry(password_row, width=29, show="*")
         self.password_entry.grid(row=0, column=1, padx=5)
 
         # Login button
